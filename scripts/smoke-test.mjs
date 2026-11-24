@@ -297,6 +297,38 @@ r = await new Client().req('/api/register', { method: 'POST', body: { associatio
 assert.equal(r.status, 409);
 ok('inscription d’une association avec mot de passe : connecté tout de suite, en attente de validation ; compte existant protégé');
 
+// ---------- Entités : chacun dit ce qu'il est (association, bar, lieu…) ----------
+const kinds = cfg.kinds.map((k) => k.id);
+assert.deepEqual(kinds, ['association', 'collectif', 'lieu', 'bar', 'entreprise', 'institution', 'autre']);
+const gus = new Client();
+r = await gus.req('/api/register', { method: 'POST', body: { association: { kind: 'bar', name: 'Le Bar du Coin', color: '#B57600' }, person: { name: 'Gus', email: 'gus@bar.test', password: 'une bière svp merci' } } });
+assert.equal(r.status, 200, JSON.stringify(r.data));
+r = await new Client().req('/api/register', { method: 'POST', body: { association: { kind: 'n’importe quoi', name: 'Type inconnu' }, person: { name: 'H', email: 'h@inconnu.test', password: 'type inconnu ok' } } });
+assert.equal(r.status, 200);
+let ov2 = (await admin.req('/api/admin/overview')).data;
+const bar = ov2.pending.find((a) => a.name === 'Le Bar du Coin');
+assert.equal(bar.kind, 'bar');
+assert.equal(ov2.pending.find((a) => a.name === 'Type inconnu').kind, 'association');
+assert.equal((await admin.req(`/api/admin/associations/${bar.id}/approve`, { method: 'POST', body: {} })).status, 200);
+assert.equal((await anon.req('/api/associations')).data.associations.find((a) => a.id === bar.id).kind, 'bar');
+// Le type se change depuis le profil
+r = await gus.req(`/api/associations/${bar.id}`, { method: 'PUT', body: { name: 'Le Bar du Coin', kind: 'lieu', contact_email: 'gus@bar.test' } });
+assert.equal(r.data.association.kind, 'lieu');
+r = await gus.req(`/api/associations/${bar.id}`, { method: 'PUT', body: { name: 'Le Bar du Coin', kind: 'pirate', contact_email: 'gus@bar.test' } });
+assert.equal(r.data.association.kind, 'lieu');
+assert.equal((await gus.req('/api/me')).data.user.association.kind, 'lieu');
+// Le type suit les dates (pour le filtre « Type d'entité »)
+const barEvent = (await gus.req('/api/events', { method: 'POST', body: { title: 'Blind test', starts_at: d(15, 21), venue_id: venue.id, category_id: cat.id, visibility: 'public', status: 'valide' } })).data.id;
+ev = (await anon.req(`/api/events/${barEvent}`)).data.event;
+assert.equal(ev.asso_kind, 'lieu'); assert.equal(ev.orgs[0].kind, 'lieu');
+// L'invitation rend aussi le lien, à envoyer soi-même si le mail n'arrive pas
+r = await gus.req(`/api/associations/${bar.id}/invitations`, { method: 'POST', body: { emails: 'serveur@bar.test' } });
+assert.equal(r.data.links.length, 1);
+assert.match(r.data.links[0].url, /\/auth\/invite\?token=[\w-]{20,}$/);
+assert.equal((await anon.req(`/api/auth/invite-info?token=${new URL(r.data.links[0].url).searchParams.get('token')}`)).data.association.name, 'Le Bar du Coin');
+for (const p of ['/entites', '/entites/le-bar-du-coin', '/associations', '/inscription?type=bar', '/mode-d-emploi']) assert.equal((await fetch(BASE + p)).status, 200, p);
+ok('entités : type choisi à l’inscription (bar, lieu…), modifiable, visible partout ; lien d’invitation à copier');
+
 // ---------- Carte et événements du territoire (« npm test » fournit de faux services d'adresse et data.gouv) ----------
 if (process.env.FAKE_SERVICES) {
   // Une adresse tapée sans choisir de suggestion est placée sur la carte par le serveur

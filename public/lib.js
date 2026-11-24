@@ -124,13 +124,13 @@ export const STATUS = {
 export const TYPES = {
   public: { label: 'Événement public', short: 'Public' },
   internal: { label: 'Réunion interne', short: 'Interne' },
-  inter: { label: 'Réunion inter-assos', short: 'Inter-assos' },
+  inter: { label: 'Réunion entre entités', short: 'Inter-entités' },
   ag: { label: 'Assemblée générale', short: 'AG' },
 };
 export const VIS = {
   public: { label: 'Public', help: 'Visible par tous, y compris sur la version publique.', icon: 'globe' },
-  associations: { label: 'Associations', help: 'Visible en entier par toutes les associations inscrites, pas par le public.', icon: 'users' },
-  private: { label: 'Privé', help: 'Visible seulement par votre association.', icon: 'lock' },
+  associations: { label: 'Entités', help: 'Visible en entier par toutes les entités inscrites (associations, lieux, bars…), pas par le public.', icon: 'users' },
+  private: { label: 'Privé', help: 'Visible seulement par votre entité.', icon: 'lock' },
 };
 
 // ---------- icônes (traits fins) ----------
@@ -181,6 +181,11 @@ const P = {
   search: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/>',
   download: '<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5"/><path d="M5 19.5h14"/>',
   compass: '<circle cx="12" cy="12" r="8.5"/><path d="m15.5 8.5-2 5-5 2 2-5 5-2Z"/>',
+  glass: '<path d="M6 4h12l-1.2 7.2A4.9 4.9 0 0 1 12 15.5a4.9 4.9 0 0 1-4.8-4.3L6 4Z"/><path d="M12 15.5V20M8.5 20h7M6.6 8h10.8"/>',
+  shop: '<path d="M4 9.5 5.5 4.5h13L20 9.5"/><path d="M4 9.5a2.7 2.7 0 0 0 5.3 0 2.7 2.7 0 0 0 5.4 0 2.7 2.7 0 0 0 5.3 0"/><path d="M5.5 11.5V20h13v-8.5M10 20v-5h4v5"/>',
+  building: '<path d="M3.5 20.5h17M5.5 20.5V9l6.5-4.5L18.5 9v11.5"/><path d="M9 20.5v-6h6v6M9 11h.01M15 11h.01"/>',
+  spark: '<path d="M12 3.5v4M12 16.5v4M3.5 12h4M16.5 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6"/>',
+  help: '<circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.4a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.2-2.4 3.7"/><path d="M12 16.9h.01"/>',
 };
 export const icon = (name, cls = '') => raw(`<svg class="${cls}" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[name] || ''}</svg>`);
 export const logo = (cls = 'logo-mark') => raw(`<svg class="${cls}" viewBox="0 0 64 80" aria-hidden="true"><use href="#lanterne-logo"/></svg>`);
@@ -194,7 +199,7 @@ export function assoLogo(a, cls = 'asso-logo') {
   const initials = String(a.name || '?').replace(/^(les?|la|l'|association)\s+/i, '').split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
   return html`<span class="${cls}" style="--c:${c}" aria-hidden="true">${initials}</span>`;
 }
-export const assoChip = (a) => html`<a class="chip-asso" style="--c:${a.color}" href="/associations/${a.slug}"><span class="dot"></span>${a.name}</a>`;
+export const assoChip = (a) => html`<a class="chip-asso" style="--c:${a.color}" href="/entites/${a.slug}"><span class="dot"></span>${a.name}</a>`;
 
 // ---------- images : redimensionnées dans le navigateur avant envoi ----------
 export function readImage(file, { max = 1600, type = 'image/jpeg', quality = 0.85 } = {}) {
@@ -241,7 +246,7 @@ export const storage = {
 export const fold = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 const haystack = (e) => fold([e.title, e.asso_name, ...(e.orgs || []).map((o) => o.name), e.venue_name, e.venue_city, e.venue_district,
   e.category_name, e.description].filter(Boolean).join(' '));
-// Tous les mots tapés doivent se retrouver quelque part dans la fiche (titre, association, lieu, catégorie, description)
+// Tous les mots tapés doivent se retrouver quelque part dans la fiche (titre, entité, lieu, catégorie, description)
 export function searchEvents(events, query) {
   const words = fold(query).split(/\s+/).filter(Boolean);
   if (!words.length) return events;
@@ -258,7 +263,7 @@ export function eventsCsv(events, origin = '') {
   const day = (d) => (d ? fmt(d, { day: '2-digit', month: '2-digit', year: 'numeric' }) : '');
   const hm = (d) => (d ? timeInput(d) : '');
   const names = (list) => (list || []).map((o) => o.name).join(', ');
-  const head = ['Date', 'Début', 'Date de fin', 'Fin', 'Titre', 'Statut', 'Type', 'Visibilité', 'Catégorie', 'Association', 'Co-organisation',
+  const head = ['Date', 'Début', 'Date de fin', 'Fin', 'Titre', 'Statut', 'Type', 'Visibilité', 'Catégorie', 'Entité', 'Co-organisation',
     'Lieu', 'Adresse', 'Commune', 'Quartier', 'Tarif', 'Lien', 'On y va', 'Intéressées', 'Fiche Lanterne'];
   const rows = events.map((e) => [
     day(e.starts_at), hm(e.starts_at), day(e.ends_at), hm(e.ends_at), e.title, STATUS[e.status]?.label || e.status, TYPES[e.type]?.short || e.type,

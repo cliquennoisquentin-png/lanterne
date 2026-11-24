@@ -1,12 +1,12 @@
 // Lanterne — point d'entrée : structure de la page, routeur, filtres, thème
 import { html, raw, $, $$, icon, logo, api, toast, STATUS, TYPES, storage } from './lib.js';
-import { state, isMember, isAdmin, navigate, setRenderer, loadAssos, loadEvents, saveFilters, filtersActive, invalidate, requireLoginToast, placeKey } from './core.js';
+import { state, kindInfo, isMember, isAdmin, navigate, setRenderer, loadAssos, loadEvents, saveFilters, filtersActive, invalidate, requireLoginToast, placeKey } from './core.js';
 import { monthView, listView, mapView, eventView, mapStyle } from './views-agenda.js';
 import { eventForm } from './views-form.js';
 import { territoryView } from './views-territoire.js';
+import { guideView } from './views-guide.js';
 import { directoryView, profileView, registerView, loginView, signupView, accountView, adminView, legalView, authVerifyView, authInviteView } from './views-other.js';
 import { playSplash } from './splash.js';
-import { watchUpdates } from './update.js';
 
 window.lanterne = { contact: '' };
 
@@ -25,7 +25,7 @@ window.lanterne.setTheme = setTheme;
 // ---------- structure ----------
 const NAV = [
   { href: '/', label: 'Agenda', icon: 'calendar', match: (p) => p === '/' || p.startsWith('/liste') || p.startsWith('/carte') || p.startsWith('/evenement') || p.startsWith('/nouveau') },
-  { href: '/associations', label: 'Associations', icon: 'users', match: (p) => p.startsWith('/associations') || p.startsWith('/inscription') },
+  { href: '/entites', label: 'Entités', icon: 'users', match: (p) => p.startsWith('/entites') || p.startsWith('/inscription') },
 ];
 
 // Néon de navigation : il glisse vers l'onglet actif (adapté du « Tubelight Navbar » d'ayushmxxn, 21st.dev)
@@ -70,10 +70,11 @@ function renderShell() {
       <nav class="topnav" data-lampnav="top" aria-label="Navigation principale">
         <span class="navlamp" aria-hidden="true"></span>
         <a href="/" ${cur(isAgenda(path) || inList)}>Agenda</a>
-        <a href="/associations" ${cur(path.startsWith('/associations') || path.startsWith('/inscription'))}>Associations</a>
+        <a href="/entites" ${cur(path.startsWith('/entites') || path.startsWith('/inscription'))}>Entités</a>
         ${isAdmin() ? html`<a href="/admin" ${cur(path.startsWith('/admin'))}>Administration</a>` : ''}
       </nav>
       <span class="spacer"></span>
+      <a class="icon-btn" href="/mode-d-emploi" aria-label="Mode d’emploi : comment ça marche" title="Mode d’emploi" ${cur(path.startsWith('/mode-d-emploi'))}>${icon('help')}</a>
       <button class="icon-btn" data-theme-toggle aria-label="${dark ? 'Passer en mode clair' : 'Passer en mode sombre'}" title="${dark ? 'Mode clair' : 'Mode sombre'}">${icon(dark ? 'sun' : 'moon')}</button>
       ${u ? html`<a class="btn small ghost account-btn" href="/compte" ${cur(path.startsWith('/compte'))}>${icon('user')}<span>${u.name ? u.name.split(' ')[0] : 'Compte'}</span></a>`
         : html`<a class="btn small account-btn" href="/connexion">Connexion</a>`}
@@ -82,7 +83,7 @@ function renderShell() {
       <span class="navlamp" aria-hidden="true"></span>
       <a href="/" ${cur(isAgenda(path))}>${icon('calendar')}<span>Agenda</span></a>
       ${isAdmin() ? '' : html`<a href="/liste" ${cur(inList)}>${icon('list')}<span>Liste</span></a>`}
-      <a href="/associations" ${cur(path.startsWith('/associations') || path.startsWith('/inscription'))}>${icon('users')}<span>Assos</span></a>
+      <a href="/entites" ${cur(path.startsWith('/entites') || path.startsWith('/inscription'))}>${icon('users')}<span>Entités</span></a>
       ${isAdmin() ? html`<a href="/admin" ${cur(path.startsWith('/admin'))}>${icon('shield')}<span>Admin</span></a>` : ''}
       <a href="${u ? '/compte' : '/connexion'}" ${cur(path.startsWith('/compte') || path.startsWith('/connexion') || path.startsWith('/creer-un-compte'))}>${icon('user')}<span>${u ? 'Compte' : 'Connexion'}</span></a>
     </nav>
@@ -121,7 +122,8 @@ async function openFilters() {
       <fieldset><legend class="label">Type</legend><div class="choice-row">${Object.entries(TYPES).map(([k, t]) => chk('types', k, t.short))}</div></fieldset>
       <fieldset><legend class="label">Catégorie</legend><div class="choice-row">${state.categories.map((c) => chk('cats', c.id, c.name))}</div></fieldset>
       <fieldset><legend class="label">Commune ou quartier</legend>${places.size ? html`<div class="choice-row">${[...places].sort((a, b) => a[1].localeCompare(b[1])).map(([k, l]) => chk('places', k, l))}</div>` : html`<p class="small faint">Aucun lieu pour l’instant.</p>`}</fieldset>
-      <fieldset><legend class="label">Association</legend>
+      <fieldset><legend class="label">Type d’entité</legend><div class="choice-row">${state.kinds.filter((k) => assos.some((a) => (a.kind || 'association') === k.id)).map((k) => chk('kinds', k.id, k.label, icon(k.icon)))}</div></fieldset>
+      <fieldset><legend class="label">Entité</legend>
         ${assos.length > 8 ? html`<input class="input" data-aq placeholder="Filtrer…" style="margin-bottom:8px">` : ''}
         <div class="choice-row">${assos.map((a) => html`<label class="choice" data-n="${a.name.toLowerCase()}"><input type="checkbox" data-g="assos" value="${a.id}" ${f.assos.includes(a.id) ? 'checked' : ''}><span class="dot" style="--c:${a.color}"></span>${a.name}</label>`)}</div></fieldset>
     </div>
@@ -131,7 +133,7 @@ async function openFilters() {
   $('[data-done]', dr).addEventListener('click', closeFilters);
   $('[data-aq]', dr)?.addEventListener('input', (ev) => { const q = ev.target.value.toLowerCase(); $$('[data-n]', dr).forEach((c) => { c.hidden = q && !c.dataset.n.includes(q); }); });
   $('[data-reset]', dr).addEventListener('click', () => {
-    state.filters = { assos: [], cats: [], places: [], statuses: [], types: [] }; saveFilters();
+    state.filters = { assos: [], cats: [], places: [], statuses: [], types: [], kinds: [] }; saveFilters();
     $$('input[type=checkbox]', dr).forEach((c) => { c.checked = false; }); render();
   });
   dr.addEventListener('change', (ev) => {
@@ -159,8 +161,11 @@ const routes = [
   [/^\/evenement\/(\d+)\/modifier\/?$/, (m) => eventForm(Number(m[1]))],
   [/^\/evenement\/(\d+)\/?$/, (m) => eventView(Number(m[1]))],
   [/^\/nouveau\/?$/, () => eventForm()],
-  [/^\/associations\/?$/, () => directoryView()],
-  [/^\/associations\/([^/]+)\/?$/, (m) => profileView(decodeURIComponent(m[1]))],
+  [/^\/entites\/?$/, () => directoryView()],
+  [/^\/entites\/([^/]+)\/?$/, (m) => profileView(decodeURIComponent(m[1]))],
+  // anciens liens (partagés avant le passage à « entités »)
+  [/^\/associations(\/[^/]+)?\/?$/, (m) => navigate(`/entites${m[1] || ''}${location.search}`, { replace: true })],
+  [/^\/mode-d-emploi\/?$/, () => guideView()],
   [/^\/inscription\/?$/, () => registerView()],
   [/^\/connexion\/?$/, () => loginView()],
   [/^\/creer-un-compte\/?$/, () => signupView()],
@@ -176,7 +181,7 @@ async function render() {
   if (!mainEl) {
     mainEl = document.createElement('main'); mainEl.id = 'main'; mainEl.tabIndex = -1;
     const foot = document.createElement('footer'); foot.className = 'footer';
-    foot.innerHTML = String(html`<span>Lanterne · l’agenda commun des associations stéphanoises</span><a href="/associations">Annuaire</a><a href="/mentions-legales">Mentions légales et confidentialité</a><a href="#" data-sub-foot>S’abonner à l’agenda</a>`);
+    foot.innerHTML = String(html`<span>Lanterne · l’agenda commun des associations stéphanoises</span><a href="/mode-d-emploi">Mode d’emploi</a><a href="/entites">Annuaire des entités</a><a href="/mentions-legales">Mentions légales et confidentialité</a><a href="#" data-sub-foot>S’abonner à l’agenda</a>`);
     document.getElementById('app').append(mainEl, foot);
     foot.querySelector('[data-sub-foot]').addEventListener('click', async (ev) => { ev.preventDefault(); (await import('./core.js')).openSubscribe(); });
   }
@@ -224,11 +229,10 @@ window.addEventListener('unhandledrejection', (ev) => {
   const splash = playSplash(ready);
   try {
     const cfg = await api('/api/config');
-    state.user = cfg.user; state.palette = cfg.palette; state.categories = cfg.categories;
+    state.user = cfg.user; state.palette = cfg.palette; state.categories = cfg.categories; state.kinds = cfg.kinds || [];
     state.passwordLogin = cfg.password_login !== false;
     state.tourisme = cfg.tourisme !== false;
     window.lanterne.contact = cfg.contact || '';
-    watchUpdates(cfg.version);
   } catch (err) {
     toast('Connexion au serveur impossible. Réessayez dans un instant.', 'error');
   }

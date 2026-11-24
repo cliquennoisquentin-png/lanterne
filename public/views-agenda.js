@@ -2,7 +2,7 @@
 import {
   html, raw, esc, $, $$, icon, lantern, statusBadge, api, toast, timeHM, dayKey, todayKey, addDays, addMonths, weekday,
   monthLabel, keyLabel, eventDays, parisDate, longDate, TYPES, VIS, STATUS, assoLogo, assoChip, fmt, timeInput,
-  searchEvents, eventsCsv, downloadText, debounce,
+  searchEvents, eventsCsv, downloadText, debounce, storage,
 } from './lib.js';
 import {
   state, isMember, isAdmin, navigate, params, loadEvents, applyFilters, filtersActive, eventCard, emptyState,
@@ -26,6 +26,21 @@ function bindCommon(root) {
   $('[data-filters]', root)?.addEventListener('click', () => window.lanterne.openFilters());
   $('[data-subscribe]', root)?.addEventListener('click', () => openSubscribe());
 }
+// Première visite sans compte : une ligne pour dire qui fait quoi (on peut la fermer pour de bon)
+function welcomeBanner() {
+  if (state.user || storage.get('lanterne-bienvenue-vue', false)) return '';
+  return html`<div class="notice info welcome" data-welcome>${icon('help')}<span><b>Première fois sur Lanterne ?</b>
+    Tout le monde peut consulter l’agenda, sans compte. Vous organisez des événements (association, lieu, bar…) ? Inscrivez votre entité.</span>
+    <a class="btn small" href="/mode-d-emploi">Mode d’emploi</a><button class="icon-btn" data-welcome-close aria-label="Fermer">${icon('close')}</button></div>`;
+}
+function bindWelcome() {
+  const banner = $('[data-welcome]');
+  if (!banner) return;
+  const seen = () => storage.set('lanterne-bienvenue-vue', true);
+  $('[data-welcome-close]', banner).addEventListener('click', () => { seen(); banner.hidden = true; });
+  $('a', banner).addEventListener('click', seen);
+}
+
 function pendingBanner() {
   const a = state.user?.association;
   if (a && a.status === 'pending') return html`<div class="notice info" style="margin-bottom:16px">${icon('clock')} <b>${a.name}</b> attend la validation d’un administrateur. Vous pourrez poser vos dates dès qu’elle sera validée.</div>`;
@@ -48,7 +63,7 @@ export async function monthView() {
   const days = [];
   for (let k = gridStart; k <= gridEnd; k = addDays(k, 1)) days.push(k);
 
-  main().innerHTML = String(html`${pendingBanner()}
+  main().innerHTML = String(html`${welcomeBanner()}${pendingBanner()}
     <div class="cal-toolbar">
       <button class="icon-btn" data-nav="-1" aria-label="Mois précédent">${icon('chevL')}</button>
       <h1 class="cal-month" aria-live="polite">${monthLabel(month)}</h1>
@@ -61,7 +76,7 @@ export async function monthView() {
     </div>
     <div class="cal-wrap"><div><div class="cal" role="grid" aria-label="Calendrier ${monthLabel(month)}"><div class="spinner" style="grid-column:1/-1"></div></div>
       <div class="legend">
-        <span>${lantern('var(--accent)')} une date (couleur de l’association)</span>
+        <span>${lantern('var(--accent)')} une date (couleur de l’entité)</span>
         <span>${lantern('var(--accent)', 'option')} en option</span>
         <span>${lantern('var(--accent)', 'annule')} annulée</span>
         <span>Plus un jour brille, plus il est chargé
@@ -71,6 +86,7 @@ export async function monthView() {
       <aside class="day-panel card" aria-live="polite"></aside>
     </div>`);
   bindCommon(main());
+  bindWelcome();
   $$('[data-nav]').forEach((b) => b.addEventListener('click', () => navigate(`/?mois=${addMonths(month, Number(b.dataset.nav))}`, { replace: true })));
 
   let events;
@@ -161,7 +177,7 @@ export async function listView() {
         <a href="/liste?archives=1" data-period="1" ${past ? raw('aria-current="page"') : ''}>${icon('archive')}Archives</a>
       </div>
       <label class="search-field">${icon('search')}<input class="input" type="search" data-search value="${query}" maxlength="100" enterkeyhint="search"
-        placeholder="Chercher une date, une association, un lieu…" aria-label="Chercher dans les dates"></label>
+        placeholder="Chercher une date, une entité, un lieu…" aria-label="Chercher dans les dates"></label>
       <button class="btn small ghost" data-export title="Télécharger ces dates dans un fichier pour Excel ou LibreOffice">${icon('download')}Exporter</button>
       <button class="btn small ghost" data-subscribe>${icon('rss')}S’abonner</button>
     </div>
@@ -377,14 +393,14 @@ export async function eventView(id) {
     </div>
 
     ${data.can_interact ? html`<div class="card">
-      <h2>Les associations présentes</h2>
+      <h2>Les entités présentes</h2>
       <div class="actions" style="margin-bottom:12px">
         <button class="btn ${mine?.kind === 'going' ? 'on' : ''}" data-att="going" aria-pressed="${String(mine?.kind === 'going')}">${icon('go')}On y va</button>
         <button class="btn ${mine?.kind === 'interested' ? 'on' : ''}" data-att="interested" aria-pressed="${String(mine?.kind === 'interested')}">${icon('star')}Intéressé</button>
       </div>
       ${going.length ? html`<p class="small muted" style="margin-bottom:6px">On y va :</p><div class="links" style="margin-bottom:10px">${going.map((a) => assoChip(a))}</div>` : ''}
       ${interested.length ? html`<p class="small muted" style="margin-bottom:6px">Intéressées :</p><div class="links">${interested.map((a) => assoChip(a))}</div>` : ''}
-      ${!going.length && !interested.length ? html`<p class="small faint">Aucune association ne s’est encore manifestée.</p>` : ''}
+      ${!going.length && !interested.length ? html`<p class="small faint">Aucune entité ne s’est encore manifestée.</p>` : ''}
     </div>
     <div class="card">
       <h2>Commentaires</h2>
@@ -396,7 +412,7 @@ export async function eventView(id) {
         <textarea class="input" name="body" rows="2" style="min-height:70px" placeholder="« On peut décaler d’une semaine ? »" required maxlength="2000"></textarea>
         <div><button class="btn primary small">Publier</button></div>
       </form>
-    </div>` : html`<div class="card"><p class="small muted" style="margin:0">Vous êtes une association ? <a href="/connexion">Connectez-vous</a> pour dire « on y va » et échanger avec les organisateurs.</p></div>`}
+    </div>` : html`<div class="card"><p class="small muted" style="margin:0">Vous êtes une association, un lieu, un bar… ? <a href="/connexion">Connectez-vous</a> pour dire « on y va » et échanger avec les organisateurs.</p></div>`}
 
     ${data.can_edit && data.history.length ? html`<details class="card more"><summary>Historique des modifications</summary>
       <div style="margin-top:10px">${data.history.map((h) => html`<div class="history-item">

@@ -45,6 +45,9 @@ Ajouts depuis la version 1 :
 | Une action qui échoue affiche toujours un message | `public/app.js` |
 | Créer son compte avec un mot de passe et se connecter sans mail (le lien par mail reste possible) | `/creer-un-compte`, `/connexion`, Mon compte, `/api/auth/signup` et `/api/auth/login` |
 | Choisir un mot de passe dès l'inscription de son association | `/inscription` |
+| « Entités » au lieu d'« associations » : à l'inscription, on dit ce qu'on est (association, collectif ou festival, lieu, bar, entreprise, institution, autre) ; le type se voit dans l'annuaire, sur la page de l'entité, et sert de filtre | `/entites`, `/inscription`, `ENTITY_KINDS` dans `server/index.js` |
+| Mode d'emploi : qui fait quoi (public, organisateurs, membres), en une page ; bandeau « Première fois sur Lanterne ? » sur l'agenda | `/mode-d-emploi`, bouton « ? » en haut |
+| Lien d'invitation à copier pour l'envoyer soi-même (SMS…) si le mail n'arrive pas | page de l'entité |
 | Carte : une pastille par date (jamais regroupées ; au même lieu, elles s'écartent en cercle) ; une adresse tapée à la main est placée automatiquement (et les lieux existants au démarrage) ; les dates hors carte sont listées sous la carte | `server/geocode.js`, Administration → Lieux |
 | Événements du territoire : ceux de l'Office de tourisme de Saint-Étienne et des offices voisins (DATAtourisme), avec un bouton sous le jour choisi du calendrier | `/territoire`, `server/tourisme.js` |
 

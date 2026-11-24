@@ -93,6 +93,16 @@ code, les commits et la documentation.
   copié dans la table `meta` (repli si data.gouv.fr ne répond pas). Marchés et périodes de plus d'un mois sont
   « en continu » et masqués par défaut. Licence Ouverte : la source est toujours citée sous la liste.
   Si l'identifiant du fichier change sur data.gouv.fr, le régler dans `TOURISME_RESOURCE`.
+- **« Entités » dans tout ce qui s'affiche** (novembre 2026) : Lanterne s'ouvre aux lieux, bars, collectifs,
+  commerces et institutions. Dans la base, l'API et le code, elles gardent leur nom technique d'origine
+  (`associations`, `association_id`, `/api/associations`) : ne pas renommer, ce serait un gros risque pour rien.
+  Les pages sont `/entites` et `/entites/:slug` ; les anciens liens `/associations…` redirigent.
+  Le slogan « l'agenda commun des associations stéphanoises » est gardé (c'est la marque).
+- **Type d'entité** : colonne `associations.kind`, liste `ENTITY_KINDS` dans `server/index.js`, envoyée à
+  l'interface par `/api/config`. Un type inconnu devient « association ». L'inscription commence par
+  « Qui êtes-vous ? » (`/inscription`, puis `/inscription?type=bar`…), et les libellés s'adaptent (`KIND_WORDS`).
+- **Pas de bandeau « Mise à jour disponible »** : il gênait. Le code est chargé « réseau d'abord » par le
+  service hors ligne, donc la nouvelle version arrive simplement au prochain chargement de page.
 - **Les tests ne dépendent pas d'internet** : `scripts/test.mjs` lance un faux service d'adresses et un faux
   data.gouv.fr locaux.
 - **Les tests ne lisent pas `.env`** (`NODE_ENV=test`) : impossible de toucher la vraie base par accident.

@@ -1,6 +1,6 @@
 // Lanterne — service worker : l'appli s'ouvre même sans réseau, les données restent fraîches
 const VERSION = 'lanterne-v3';
-const SHELL = ['/', '/styles.css', '/app.js', '/lib.js', '/core.js', '/views-agenda.js', '/views-form.js', '/views-other.js', '/views-territoire.js', '/splash.js', '/update.js',
+const SHELL = ['/', '/styles.css', '/app.js', '/lib.js', '/core.js', '/views-agenda.js', '/views-form.js', '/views-other.js', '/views-territoire.js', '/views-guide.js', '/splash.js',
   '/manifest.webmanifest', '/icons/lanterne.svg', '/icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {

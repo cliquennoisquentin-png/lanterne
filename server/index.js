@@ -21,7 +21,7 @@ const PORT = Number(process.env.PORT || 3000);
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
 const SESSION_DAYS = 90;
 const COOKIE = 'lt_sid';
-// Numéro de version : change à chaque déploiement (sert au bouton « Mise à jour disponible »)
+// Numéro de version : change à chaque déploiement (le service hors ligne vide alors ses anciens caches)
 const VERSION = (process.env.RAILWAY_DEPLOYMENT_ID || process.env.RAILWAY_GIT_COMMIT_SHA || '').slice(0, 12) || `dev-${Date.now().toString(36)}`;
 
 export const PALETTE = [
@@ -31,6 +31,21 @@ export const PALETTE = [
   { name: 'Magenta', hex: '#C04BE0' }, { name: 'Violet', hex: '#8A63F0' }, { name: 'Indigo', hex: '#5B7BF5' },
 ];
 const PALETTE_HEX = new Set(PALETTE.map((p) => p.hex));
+
+// Les « entités » : tous ceux qui posent des dates sur Lanterne. Dans la base et l'API, elles gardent leur
+// nom technique d'origine (« associations ») ; seul ce qui s'affiche dit « entité ».
+export const ENTITY_KINDS = [
+  { id: 'association', label: 'Association', hint: 'Association loi 1901, amicale, club, comité des fêtes…', icon: 'users' },
+  { id: 'collectif', label: 'Collectif, festival', hint: 'Organisateur d’événements, festival, compagnie, groupe…', icon: 'star' },
+  { id: 'lieu', label: 'Lieu, salle', hint: 'Salle de concert, tiers-lieu, MJC, théâtre, cinéma…', icon: 'pin' },
+  { id: 'bar', label: 'Bar, café, restaurant', hint: 'Café-concert, bar associatif, restaurant…', icon: 'glass' },
+  { id: 'entreprise', label: 'Entreprise, commerce', hint: 'Boutique, librairie, artisan, brasserie, entreprise…', icon: 'shop' },
+  { id: 'institution', label: 'Collectivité, institution', hint: 'Mairie, médiathèque, école, office de tourisme…', icon: 'building' },
+  { id: 'autre', label: 'Autre', hint: 'Ce qui ne rentre dans aucune case', icon: 'spark' },
+];
+const KIND_IDS = new Set(ENTITY_KINDS.map((k) => k.id));
+const kindOf = (v, fallback) => (KIND_IDS.has(v) ? v : fallback);
+const kindLabel = (id) => ENTITY_KINDS.find((k) => k.id === id)?.label || 'Entité';
 
 // ---------- utilitaires ----------
 const token = (n = 32) => crypto.randomBytes(n).toString('base64url');
@@ -145,7 +160,7 @@ app.use(wrap(async (req, res, next) => {
   const sid = req.cookies[COOKIE];
   if (sid) {
     req.user = await one(
-      `SELECT u.*, a.status AS asso_status, a.name AS asso_name, a.slug AS asso_slug, a.color AS asso_color
+      `SELECT u.*, a.status AS asso_status, a.name AS asso_name, a.slug AS asso_slug, a.color AS asso_color, a.kind AS asso_kind
        FROM sessions s JOIN users u ON u.id = s.user_id LEFT JOIN associations a ON a.id = u.association_id
        WHERE s.id = $1 AND s.expires_at > now()`, [sha(sid)]);
   }
@@ -157,7 +172,7 @@ const requireAdmin = (req) => { const u = requireUser(req); if (!u.is_admin) fai
 const memberAssoId = (u) => (u && u.association_id && u.asso_status === 'approved' ? u.association_id : null);
 const requireMember = (req) => {
   const u = requireUser(req);
-  if (!memberAssoId(u)) fail(403, u.association_id ? 'Votre association attend encore sa validation.' : 'Vous devez être rattaché à une association.');
+  if (!memberAssoId(u)) fail(403, u.association_id ? 'Votre entité attend encore sa validation.' : 'Vous devez être rattaché à une entité (association, lieu, bar…).');
   return u;
 };
 
@@ -248,7 +263,7 @@ function publicUser(u) {
   if (!u) return null;
   return {
     id: u.id, email: u.email, name: u.name, is_admin: u.is_admin, ics_token: u.ics_token, has_password: !!u.password_hash,
-    association: u.association_id ? { id: u.association_id, name: u.asso_name, slug: u.asso_slug, color: u.asso_color, status: u.asso_status } : null,
+    association: u.association_id ? { id: u.association_id, name: u.asso_name, slug: u.asso_slug, color: u.asso_color, status: u.asso_status, kind: u.asso_kind || 'association' } : null,
   };
 }
 
@@ -271,7 +286,7 @@ app.get('/health', async (req, res) => {
 // ---------- configuration ----------
 app.get('/api/config', wrap(async (req, res) => {
   const categories = await all('SELECT id, name, position, active FROM categories ORDER BY position, name');
-  res.json({ palette: PALETTE, categories, user: publicUser(req.user), contact: process.env.CONTACT_EMAIL || '', version: VERSION, password_login: PASSWORD_LOGIN, tourisme: TOURISME_ENABLED });
+  res.json({ palette: PALETTE, kinds: ENTITY_KINDS, categories, user: publicUser(req.user), contact: process.env.CONTACT_EMAIL || '', version: VERSION, password_login: PASSWORD_LOGIN, tourisme: TOURISME_ENABLED });
 }));
 
 // ---------- authentification ----------
@@ -346,16 +361,16 @@ const findInvite = (t) => one(`SELECT i.*, a.status, a.name AS asso_name, a.colo
 app.get('/api/auth/invite-info', wrap(async (req, res) => {
   const t = tokenParam(req.query.token);
   const inv = t && await findInvite(t);
-  if (!inv) fail(410, 'Cette invitation a expiré ou a déjà servi. Demandez une nouvelle invitation à votre association.');
+  if (!inv) fail(410, 'Cette invitation a expiré ou a déjà servi. Demandez une nouvelle invitation à votre entité.');
   res.json({ association: { name: inv.asso_name, color: inv.asso_color } });
 }));
 
 app.post('/api/auth/invite', wrap(async (req, res) => {
   const t = tokenParam(req.body.token);
   const inv = t && await findInvite(t);
-  if (!inv) fail(410, 'Cette invitation a expiré ou a déjà servi. Demandez une nouvelle invitation à votre association.');
+  if (!inv) fail(410, 'Cette invitation a expiré ou a déjà servi. Demandez une nouvelle invitation à votre entité.');
   let u = await one('SELECT * FROM users WHERE email = $1', [inv.email]);
-  if (u && u.association_id && u.association_id !== inv.association_id) fail(409, 'Cette adresse est déjà rattachée à une autre association.');
+  if (u && u.association_id && u.association_id !== inv.association_id) fail(409, 'Cette adresse est déjà rattachée à une autre entité.');
   if (!u) u = await ensureUser(inv.email, { association_id: inv.association_id });
   else await q('UPDATE users SET association_id = $1 WHERE id = $2', [inv.association_id, u.id]);
   await q('UPDATE invitations SET accepted_at = now() WHERE id = $1', [inv.id]);
@@ -458,14 +473,15 @@ async function uniqueSlug(name, exceptId = null) {
 }
 
 app.post('/api/register', wrap(async (req, res) => {
-  if (limited(`reg:${req.ip}`, 5, 60 * 60e3)) fail(429, 'Trop de demandes. Réessayez plus tard.');
+  if (limited(`reg:${req.ip}`, 10, 60 * 60e3)) fail(429, 'Trop de demandes. Réessayez plus tard.');
   const a = req.body.association || {};
   const p = req.body.person || {};
   const email = req.user ? req.user.email : normEmail(p.email);
   const personName = req.user ? (req.user.name || str(p.name, 80)) : str(p.name, 80);
   const name = str(a.name, 120);
   const contact = normEmail(a.contact_email || email);
-  if (!name) fail(400, 'Indiquez le nom de l’association.');
+  const kind = kindOf(a.kind, 'association');
+  if (!name) fail(400, 'Indiquez le nom de l’entité.');
   if (!isEmail(email)) fail(400, 'Indiquez votre adresse mail.');
   if (!personName) fail(400, 'Indiquez votre nom.');
   if (!isEmail(contact)) fail(400, 'Adresse de contact invalide.');
@@ -474,18 +490,18 @@ app.post('/api/register', wrap(async (req, res) => {
   const pw = !req.user && p.password ? passwordInput(p.password, email) : null;
 
   const existing = await one('SELECT * FROM users WHERE email = $1', [email]);
-  if (existing && existing.association_id) fail(409, 'Cette adresse est déjà rattachée à une association.');
-  if (pw && existing) fail(409, 'Un compte existe déjà avec cette adresse : connectez-vous d’abord, puis inscrivez votre association.');
-  if (pw && ADMIN_EMAILS.includes(email)) fail(403, 'Cette adresse est celle d’un administrateur : créez d’abord votre compte, puis inscrivez votre association.');
+  if (existing && existing.association_id) fail(409, 'Cette adresse est déjà rattachée à une entité.');
+  if (pw && existing) fail(409, 'Un compte existe déjà avec cette adresse : connectez-vous d’abord, puis inscrivez votre entité.');
+  if (pw && ADMIN_EMAILS.includes(email)) fail(403, 'Cette adresse est celle d’un administrateur : créez d’abord votre compte, puis inscrivez votre entité.');
   const dup = await one('SELECT id FROM associations WHERE lower(name) = lower($1)', [name]);
-  if (dup) fail(409, 'Une association porte déjà ce nom. Demandez à ses membres de vous inviter.');
+  if (dup) fail(409, 'Une entité porte déjà ce nom sur Lanterne. Demandez à ses membres de vous inviter.');
 
   const logoId = a.logo ? await saveImage(a.logo) : null;
   const slug = await uniqueSlug(name);
   const asso = await one(
-    `INSERT INTO associations (name, slug, color, logo_id, description, contact_email, phone, website, commune, socials)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-    [name, slug, color, logoId, str(a.description, 2000), contact, str(a.phone, 40), safeUrl(a.website), str(a.commune, 80), JSON.stringify({})]);
+    `INSERT INTO associations (name, slug, color, logo_id, description, contact_email, phone, website, commune, socials, kind)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+    [name, slug, color, logoId, str(a.description, 2000), contact, str(a.phone, 40), safeUrl(a.website), str(a.commune, 80), JSON.stringify({}), kind]);
 
   let u = existing;
   if (u) u = await one('UPDATE users SET association_id = $1, name = COALESCE(NULLIF(name, \'\'), $2) WHERE id = $3 RETURNING *', [asso.id, personName, u.id]);
@@ -496,7 +512,7 @@ app.post('/api/register', wrap(async (req, res) => {
   const base = baseUrl(req);
   const admins = await all('SELECT email FROM users WHERE is_admin');
   const adminList = new Set([...admins.map((x) => x.email), ...ADMIN_EMAILS]);
-  for (const to of adminList) await adminNewAssoMail(to, name, `${base}/admin`);
+  for (const to of adminList) await adminNewAssoMail(to, name, `${base}/admin`, kindLabel(kind));
 
   if (pw) await createSession(res, u.id); // connecté tout de suite
   else if (!req.user) {
@@ -508,7 +524,7 @@ app.post('/api/register', wrap(async (req, res) => {
 }));
 
 // ---------- associations ----------
-const ASSO_FIELDS = 'a.id, a.name, a.slug, a.color, a.logo_id, a.description, a.contact_email, a.phone, a.website, a.socials, a.commune, a.status, a.created_at';
+const ASSO_FIELDS = 'a.id, a.name, a.slug, a.color, a.kind, a.logo_id, a.description, a.contact_email, a.phone, a.website, a.socials, a.commune, a.status, a.created_at';
 
 app.get('/api/associations', wrap(async (req, res) => {
   const rows = await all(`SELECT ${ASSO_FIELDS},
@@ -520,7 +536,7 @@ app.get('/api/associations', wrap(async (req, res) => {
 app.get('/api/associations/:slug', wrap(async (req, res) => {
   const a = await one(`SELECT ${ASSO_FIELDS} FROM associations a WHERE a.slug = $1`, [req.params.slug]);
   const mine = req.user && req.user.association_id === a?.id;
-  if (!a || (a.status !== 'approved' && !mine && !req.user?.is_admin)) fail(404, 'Association introuvable.');
+  if (!a || (a.status !== 'approved' && !mine && !req.user?.is_admin)) fail(404, 'Entité introuvable.');
   let members = null; let invitations = null;
   if (mine || req.user?.is_admin) {
     members = await all('SELECT id, name, email FROM users WHERE association_id = $1 ORDER BY lower(name)', [a.id]);
@@ -532,9 +548,9 @@ app.get('/api/associations/:slug', wrap(async (req, res) => {
 app.put('/api/associations/:id', wrap(async (req, res) => {
   const u = requireUser(req);
   const id = Number(req.params.id);
-  if (u.association_id !== id && !u.is_admin) fail(403, 'Vous ne pouvez modifier que votre association.');
+  if (u.association_id !== id && !u.is_admin) fail(403, 'Vous ne pouvez modifier que votre entité.');
   const before = await one('SELECT * FROM associations WHERE id = $1', [id]);
-  if (!before) fail(404, 'Association introuvable.');
+  if (!before) fail(404, 'Entité introuvable.');
   const b = req.body;
   const name = str(b.name, 120) || before.name;
   let logoId = before.logo_id;
@@ -547,10 +563,10 @@ app.put('/api/associations/:id', wrap(async (req, res) => {
   }
   const slug = name !== before.name ? await uniqueSlug(name, id) : before.slug;
   const after = await one(
-    `UPDATE associations SET name=$1, slug=$2, color=$3, logo_id=$4, description=$5, contact_email=$6, phone=$7, website=$8, commune=$9, socials=$10 WHERE id=$11 RETURNING *`,
+    `UPDATE associations SET name=$1, slug=$2, color=$3, logo_id=$4, description=$5, contact_email=$6, phone=$7, website=$8, commune=$9, socials=$10, kind=$11 WHERE id=$12 RETURNING *`,
     [name, slug, PALETTE_HEX.has(b.color) ? b.color : before.color, logoId, str(b.description, 2000),
       isEmail(normEmail(b.contact_email)) ? normEmail(b.contact_email) : before.contact_email,
-      str(b.phone, 40), safeUrl(b.website), str(b.commune, 80), JSON.stringify(socials), id]);
+      str(b.phone, 40), safeUrl(b.website), str(b.commune, 80), JSON.stringify(socials), kindOf(b.kind, before.kind), id]);
   await logHistory({ query: q }, { entity: 'association', entityId: id, action: 'modification', user: u, before, after });
   res.json({ association: after });
 }));
@@ -558,22 +574,25 @@ app.put('/api/associations/:id', wrap(async (req, res) => {
 app.post('/api/associations/:id/invitations', wrap(async (req, res) => {
   const u = requireMember(req);
   const id = Number(req.params.id);
-  if (u.association_id !== id) fail(403, 'Vous ne pouvez inviter que dans votre association.');
+  if (u.association_id !== id) fail(403, 'Vous ne pouvez inviter que dans votre entité.');
   const emails = String(req.body.emails || '').split(/[\s,;]+/).map(normEmail).filter(Boolean);
   if (!emails.length) fail(400, 'Indiquez au moins une adresse.');
   if (emails.length > 30) fail(400, '30 invitations maximum à la fois.');
   if (limited(`inv:${u.id}`, 40, 60 * 60e3)) fail(429, 'Trop d’invitations d’un coup. Réessayez dans une heure.');
   const base = baseUrl(req);
-  const result = { sent: [], skipped: [] };
+  // Les liens sont aussi rendus au membre qui invite : il peut les envoyer lui-même (SMS…) si le mail n'arrive pas
+  const result = { sent: [], skipped: [], links: [] };
   for (const email of emails) {
     if (!isEmail(email)) { result.skipped.push({ email, reason: 'adresse invalide' }); continue; }
     const other = await one('SELECT association_id FROM users WHERE email = $1', [email]);
     if (other?.association_id === id) { result.skipped.push({ email, reason: 'déjà membre' }); continue; }
-    if (other?.association_id) { result.skipped.push({ email, reason: 'déjà dans une autre association' }); continue; }
+    if (other?.association_id) { result.skipped.push({ email, reason: 'déjà dans une autre entité' }); continue; }
     const t = token();
     await q('INSERT INTO invitations (association_id, email, invited_by, token_hash) VALUES ($1,$2,$3,$4)', [id, email, u.id, sha(t)]);
-    await inviteMail(email, u.asso_name, u.name, `${base}/auth/invite?token=${t}`);
+    const url = `${base}/auth/invite?token=${t}`;
+    await inviteMail(email, u.asso_name, u.name, url);
     result.sent.push(email);
+    result.links.push({ email, url });
   }
   res.json(result);
 }));
@@ -688,11 +707,11 @@ app.get('/api/tourisme', wrap(async (req, res) => {
 
 // ---------- événements ----------
 const EVENT_SELECT = `
-  SELECT e.*, a.name AS asso_name, a.slug AS asso_slug, a.color AS asso_color,
+  SELECT e.*, a.name AS asso_name, a.slug AS asso_slug, a.color AS asso_color, a.kind AS asso_kind,
          v.name AS venue_name, v.address AS venue_address, v.city AS venue_city, v.district AS venue_district, v.lat, v.lng,
          c.name AS category_name,
          r.starts_at AS rescheduled_from_date,
-         COALESCE((SELECT json_agg(json_build_object('id', oa.id, 'name', oa.name, 'slug', oa.slug, 'color', oa.color) ORDER BY oa.id = e.association_id DESC, oa.name)
+         COALESCE((SELECT json_agg(json_build_object('id', oa.id, 'name', oa.name, 'slug', oa.slug, 'color', oa.color, 'kind', oa.kind) ORDER BY oa.id = e.association_id DESC, oa.name)
                    FROM event_orgs eo JOIN associations oa ON oa.id = eo.association_id WHERE eo.event_id = e.id), '[]') AS orgs,
          COALESCE((SELECT json_agg(json_build_object('id', ta.id, 'name', ta.name, 'slug', ta.slug, 'color', ta.color, 'kind', t.kind) ORDER BY t.created_at)
                    FROM attendances t JOIN associations ta ON ta.id = t.association_id WHERE t.event_id = e.id), '[]') AS attendances,
@@ -820,7 +839,7 @@ app.post('/api/events', wrap(async (req, res) => {
 app.put('/api/events/:id', wrap(async (req, res) => {
   const u = requireUser(req);
   const id = Number(req.params.id);
-  if (!(await canEdit(u, id))) fail(403, 'Seules les associations organisatrices peuvent modifier cette date.');
+  if (!(await canEdit(u, id))) fail(403, 'Seules les entités organisatrices peuvent modifier cette date.');
   const existing = await one('SELECT * FROM events WHERE id = $1 AND deleted_at IS NULL', [id]);
   if (!existing) fail(404, 'Événement introuvable.');
   const v = await eventInput(req.body, u, existing);
@@ -943,8 +962,8 @@ app.post('/api/history/:id/revert', wrap(async (req, res) => {
   } else if (h.entity === 'association') {
     if (u.association_id !== h.entity_id && !u.is_admin) fail(403, 'Action non autorisée.');
     const cur = await one('SELECT * FROM associations WHERE id = $1', [h.entity_id]);
-    await q('UPDATE associations SET name=$1, slug=$2, color=$3, logo_id=$4, description=$5, contact_email=$6, phone=$7, website=$8, commune=$9, socials=$10 WHERE id=$11',
-      [b.name, b.slug, b.color, b.logo_id, b.description, b.contact_email, b.phone, b.website, b.commune, JSON.stringify(b.socials || {}), h.entity_id]);
+    await q('UPDATE associations SET name=$1, slug=$2, color=$3, logo_id=$4, description=$5, contact_email=$6, phone=$7, website=$8, commune=$9, socials=$10, kind=$11 WHERE id=$12',
+      [b.name, b.slug, b.color, b.logo_id, b.description, b.contact_email, b.phone, b.website, b.commune, JSON.stringify(b.socials || {}), kindOf(b.kind, 'association'), h.entity_id]);
     await logHistory({ query: q }, { entity: 'association', entityId: h.entity_id, action: 'retour en arrière', user: u, before: cur, after: await one('SELECT * FROM associations WHERE id = $1', [h.entity_id]) });
   } else if (h.entity === 'venue') {
     requireAdmin(req);
@@ -974,7 +993,7 @@ app.post('/api/admin/associations/:id/:decision', wrap(async (req, res) => {
   if (!['approve', 'reject', 'pending'].includes(decision)) fail(400, 'Décision inconnue.');
   const status = { approve: 'approved', reject: 'rejected', pending: 'pending' }[decision];
   const before = await one('SELECT * FROM associations WHERE id = $1', [id]);
-  if (!before) fail(404, 'Association introuvable.');
+  if (!before) fail(404, 'Entité introuvable.');
   const after = await one(`UPDATE associations SET status = $1, approved_at = CASE WHEN $1 = 'approved' THEN now() ELSE approved_at END WHERE id = $2 RETURNING *`, [status, id]);
   await logHistory({ query: q }, { entity: 'association', entityId: id, action: { approved: 'validation', rejected: 'refus', pending: 'remise en attente' }[status], user: u, before, after });
   if (status === 'approved' && before.status !== 'approved') {

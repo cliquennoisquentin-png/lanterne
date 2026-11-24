@@ -44,7 +44,7 @@ export async function territoryView() {
   let showOngoing = p.get('continu') === '1';
 
   main().innerHTML = String(html`<div class="page-head"><h1>Événements du territoire</h1><span class="spacer"></span>
-      <a class="btn ghost" href="${day ? `/?mois=${day.slice(0, 7)}&jour=${day}` : '/'}">${icon('calendar')}Agenda des associations</a></div>
+      <a class="btn ghost" href="${day ? `/?mois=${day.slice(0, 7)}&jour=${day}` : '/'}">${icon('calendar')}Retour à l’agenda</a></div>
     <p class="muted small territory-intro">Les fêtes, concerts, spectacles, marchés… publiés par l’Office de tourisme de Saint-Étienne et les offices de tourisme alentour.
       Pratique pour ne pas poser une date le même soir qu’un grand événement.</p>
     <div data-territory><div class="spinner"></div></div>`);

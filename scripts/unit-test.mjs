@@ -55,7 +55,7 @@ assert.ok(csv.startsWith('﻿Date;Début;Date de fin;Fin;Titre;'));
 const [head, line, rest] = csv.slice(1).split('\r\n');
 assert.equal(rest, '');
 assert.equal(head.split(';').length, 20);
-assert.equal(line, '24/12/2026;20:30;25/12/2026;01:00;"\'=SOMME(A1) ; ""concert""";Validé;Public;Associations;Concert;Les Amis du Fil;Quartier Libre;'
+assert.equal(line, '24/12/2026;20:30;25/12/2026;01:00;"\'=SOMME(A1) ; ""concert""";Validé;Public;Entités;Concert;Les Amis du Fil;Quartier Libre;'
   + 'Le Fil;20 boulevard Thiers;Saint-Étienne;;Prix libre;https://exemple.fr;Fanfare;Chorale;https://lanterne.test/evenement/7');
 ok('export : accents lisibles par Excel, point-virgule, guillemets doublés, formules neutralisées, heure de Paris');
 

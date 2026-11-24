@@ -154,5 +154,9 @@ CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions (user_id);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT false;
 
+-- Type d'entité : association, collectif, lieu, bar, entreprise, institution ou autre (liste dans server/index.js).
+-- Les entités inscrites avant cette colonne sont des associations.
+ALTER TABLE associations ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'association';
+
 -- Petites informations techniques (ex. date de la dernière sauvegarde)
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);

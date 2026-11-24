@@ -110,18 +110,18 @@ export function inviteMail(to, assoName, inviterName, url) {
     to,
     subject: `${assoName} vous invite sur Lanterne`,
     html: layout(`Rejoignez ${assoName} sur Lanterne`,
-      `${esc(inviterName || 'Un membre')} vous invite à rejoindre <b>${esc(assoName)}</b> sur Lanterne, l’agenda commun des associations stéphanoises. Vous pourrez y poser les dates de l’association et voir celles des autres.`,
-      'Rejoindre l’association', url),
+      `${esc(inviterName || 'Un membre')} vous invite à rejoindre <b>${esc(assoName)}</b> sur Lanterne, l’agenda commun des associations stéphanoises. Vous pourrez y poser ses dates et voir celles des autres.`,
+      'Rejoindre l’entité', url),
     text: `${inviterName || 'Un membre'} vous invite à rejoindre ${assoName} sur Lanterne : ${url}`,
   });
 }
 
-export function adminNewAssoMail(to, assoName, url) {
+export function adminNewAssoMail(to, assoName, url, kind = 'Association') {
   return sendMail({
     to,
-    subject: `Nouvelle association à valider : ${assoName}`,
-    html: layout('Une association attend sa validation', `<b>${esc(assoName)}</b> vient de s’inscrire sur Lanterne. Vérifiez qu’elle existe vraiment, puis validez-la.`, 'Voir les inscriptions', url),
-    text: `${assoName} vient de s'inscrire sur Lanterne. À valider : ${url}`,
+    subject: `Nouvelle entité à valider : ${assoName} (${kind})`,
+    html: layout('Une entité attend sa validation', `<b>${esc(assoName)}</b> (${esc(kind)}) vient de s’inscrire sur Lanterne. Vérifiez qu’elle existe vraiment, puis validez-la.`, 'Voir les inscriptions', url),
+    text: `${assoName} (${kind}) vient de s'inscrire sur Lanterne. À valider : ${url}`,
   });
 }
 
@@ -129,13 +129,13 @@ export function approvedMail(to, assoName, url) {
   return sendMail({
     to,
     subject: `${assoName} est validée sur Lanterne`,
-    html: layout('Votre association est validée', `<b>${esc(assoName)}</b> fait maintenant partie de Lanterne. Vous pouvez poser vos dates et inviter les autres membres.`, 'Ouvrir Lanterne', url),
+    html: layout('Votre entité est validée', `<b>${esc(assoName)}</b> fait maintenant partie de Lanterne. Vous pouvez poser vos dates et inviter les autres membres.`, 'Ouvrir Lanterne', url),
     text: `${assoName} est validée sur Lanterne : ${url}`,
   });
 }
 
 export function backupMail(to, { zip, name, counts, withImages }, url) {
-  const summary = `${counts.associations} association(s), ${counts.users} membre(s), ${counts.events} date(s), ${counts.venues} lieu(x)`;
+  const summary = `${counts.associations} entité(s), ${counts.users} membre(s), ${counts.events} date(s), ${counts.venues} lieu(x)`;
   return sendMail({
     to,
     subject: `Sauvegarde de Lanterne — ${new Date().toLocaleDateString('fr-FR', { timeZone: 'Europe/Paris' })}`,

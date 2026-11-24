@@ -4,13 +4,21 @@ import { api, html, raw, esc, $, $$, icon, lantern, statusBadge, timeHM, dayKey,
 export const state = {
   user: null,
   palette: [],
+  kinds: [],           // types d'entité (association, bar, lieu…), envoyés par le serveur
   categories: [],
   passwordLogin: true, // connexion par mot de passe proposée (réglage PASSWORD_LOGIN du serveur)
   tourisme: true,      // page « Événements du territoire » proposée (réglage TOURISME du serveur)
   assos: [],
   venues: null,
-  filters: storage.get('lanterne-filters', { assos: [], cats: [], places: [], statuses: [], types: [] }),
+  filters: { assos: [], cats: [], places: [], statuses: [], types: [], kinds: [], ...storage.get('lanterne-filters', {}) },
   cache: new Map(),
+};
+
+// Types d'entité : libellé et icône. Une entité sans type connu est une association (celles d'avant).
+export const kindInfo = (id) => state.kinds.find((k) => k.id === id) || state.kinds[0] || { id: 'association', label: 'Association', icon: 'users' };
+export const kindBadge = (id, cls = '') => {
+  const k = kindInfo(id || 'association');
+  return html`<span class="kind-badge ${cls}" data-kind="${k.id}">${icon(k.icon)}${k.label}</span>`;
 };
 
 export const isMember = () => !!(state.user?.association && state.user.association.status === 'approved');
@@ -72,12 +80,13 @@ export function normEvent(e) { return { ...e, orgs: parse(e.orgs), attendances: 
 export const placeKey = (e) => (e.venue_city ? (e.venue_district ? `${e.venue_city}|${e.venue_district}` : e.venue_city) : '');
 export function filtersActive() {
   const f = state.filters;
-  return f.assos.length + f.cats.length + f.places.length + f.statuses.length + f.types.length;
+  return f.assos.length + f.cats.length + f.places.length + f.statuses.length + f.types.length + f.kinds.length;
 }
 export function applyFilters(events) {
   const f = state.filters;
   return events.filter((e) => {
     if (f.assos.length && !e.orgs.some((o) => f.assos.includes(o.id))) return false;
+    if (f.kinds.length && !e.orgs.some((o) => f.kinds.includes(o.kind || 'association'))) return false;
     if (f.cats.length && !f.cats.includes(e.category_id)) return false;
     if (f.places.length) {
       const pk = placeKey(e);
@@ -99,14 +108,14 @@ export function eventCard(e, { showDate = false } = {}) {
     <div class="ev-body">
       <div class="ev-title ${e.status === 'annule' ? 'cancelled-title' : ''}">${e.title}</div>
       <div class="ev-meta">
-        <span><span class="dot" style="--c:${c}"></span>${e.asso_name}${co}</span>
+        <span title="${kindInfo(e.asso_kind).label}"><span class="dot" style="--c:${c}"></span>${e.asso_name}${co}</span>
         ${e.venue_name ? html`<span>${icon('pin')}${e.venue_name}${e.venue_city ? ` · ${e.venue_city}` : ''}</span>` : ''}
       </div>
       <div class="ev-badges">
         ${statusBadge(e.status)}
         ${e.category_name ? html`<span class="tag">${e.category_name}</span>` : ''}
         ${e.type !== 'public' ? html`<span class="tag">${TYPES[e.type].short}</span>` : ''}
-        ${e.visibility !== 'public' ? html`<span class="tag">${icon(e.visibility === 'private' ? 'lock' : 'users')}${e.visibility === 'private' ? 'Privé' : 'Assos'}</span>` : ''}
+        ${e.visibility !== 'public' ? html`<span class="tag">${icon(e.visibility === 'private' ? 'lock' : 'users')}${e.visibility === 'private' ? 'Privé' : 'Entités'}</span>` : ''}
         ${e.rescheduled_from ? html`<span class="tag">Reporté</span>` : ''}
         ${e.attendances.length ? html`<span class="tag">${icon('go')}${e.attendances.length} asso${e.attendances.length > 1 ? 's' : ''}</span>` : ''}
         ${e.comment_count ? html`<span class="tag">${icon('comment')}${e.comment_count}</span>` : ''}
@@ -172,19 +181,19 @@ export async function openSubscribe(preset = {}) {
   };
   const body = html`
     <p class="muted small">Copiez ce lien dans votre agenda : les dates s’y mettront à jour toutes seules.
-    ${state.user ? 'Ce lien est personnel : il montre aussi les dates réservées aux associations. Ne le partagez pas.' : 'Ce lien ne contient que les dates publiques.'}</p>
+    ${state.user ? 'Ce lien est personnel : il montre aussi les dates réservées aux entités inscrites. Ne le partagez pas.' : 'Ce lien ne contient que les dates publiques.'}</p>
     <div class="stack">
       <fieldset class="fs">
         <legend class="field-label">Quelles dates ?</legend>
         <div class="choice-row">
           <label class="choice"><input type="radio" name="scope" value="all" ${preset.scope ? '' : 'checked'}>Toutes</label>
           ${member ? html`<label class="choice"><input type="radio" name="scope" value="mine" ${preset.scope === 'mine' ? 'checked' : ''}>Mes événements</label>` : ''}
-          <label class="choice"><input type="radio" name="scope" value="asso" ${preset.scope === 'asso' ? 'checked' : ''}>Une association</label>
+          <label class="choice"><input type="radio" name="scope" value="asso" ${preset.scope === 'asso' ? 'checked' : ''}>Une entité</label>
           <label class="choice"><input type="radio" name="scope" value="cat" ${preset.scope === 'cat' ? 'checked' : ''}>Une catégorie</label>
         </div>
-        ${member ? html`<p class="hint">« Mes événements » : les dates de votre association et celles où elle a dit « on y va ».</p>` : ''}
+        ${member ? html`<p class="hint">« Mes événements » : les dates de votre entité et celles où elle a dit « on y va ».</p>` : ''}
       </fieldset>
-      <label class="field" data-show="asso" hidden><span>Association</span>
+      <label class="field" data-show="asso" hidden><span>Entité</span>
         <select class="input" name="asso">${state.assos.map((a) => html`<option value="${a.slug}" ${preset.asso === a.slug ? 'selected' : ''}>${a.name}</option>`)}</select></label>
       <label class="field" data-show="cat" hidden><span>Catégorie</span>
         <select class="input" name="cat">${state.categories.filter((c) => c.active).map((c) => html`<option value="${c.id}">${c.name}</option>`)}</select></label>
@@ -229,7 +238,7 @@ export async function shareEvent(e) {
 }
 
 export function requireLoginToast() {
-  toast('Connectez-vous avec votre association pour ajouter une date.');
+  toast('Connectez-vous avec votre entité (association, lieu, bar…) pour ajouter une date.');
 }
 
 export { dayKey };

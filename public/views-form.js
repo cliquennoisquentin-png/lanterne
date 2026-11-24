@@ -85,7 +85,7 @@ export function venueCreator(container, initialName, onCreated) {
 
 export async function eventForm(id = null) {
   if (!isMember()) {
-    main().innerHTML = String(emptyState(state.user ? 'Votre association doit être validée avant de poser des dates.' : 'Connectez-vous avec votre association pour poser une date.',
+    main().innerHTML = String(emptyState(state.user ? 'Votre entité doit être validée avant de poser des dates.' : 'Connectez-vous avec votre entité (association, lieu, bar…) pour poser une date.',
       !state.user ? html`<a class="btn primary" href="/connexion">Se connecter</a>` : ''));
     return;
   }
@@ -165,10 +165,10 @@ export async function eventForm(id = null) {
             <label class="field"><span>Lien (billetterie, Facebook…)</span><input class="input" name="link" value="${v.link}" inputmode="url" placeholder="https://"></label>
             <label class="field"><span>Tarif</span><input class="input" name="price" value="${v.price}" maxlength="120" placeholder="Gratuit, 5 €, prix libre…"></label>
           </div>
-          <div class="field"><span class="field-label">Associations co-organisatrices</span>
-            ${others.length ? html`<input class="input" data-coorg-q placeholder="Filtrer les associations…" style="margin-bottom:8px">
+          <div class="field"><span class="field-label">Entités co-organisatrices</span>
+            ${others.length ? html`<input class="input" data-coorg-q placeholder="Filtrer les entités…" style="margin-bottom:8px">
             <div class="choice-row" data-coorgs style="max-height:220px;overflow:auto">${others.map((a) => html`<label class="choice" data-name="${a.name.toLowerCase()}"><input type="checkbox" name="coorgs" value="${a.id}" ${v.coorgs.includes(a.id) ? 'checked' : ''}><span class="dot" style="--c:${a.color}"></span>${a.name}</label>`)}</div>
-            <p class="hint">La date apparaîtra dans leur agenda et leurs membres pourront la modifier.</p>` : html`<p class="hint">Aucune autre association inscrite pour l’instant.</p>`}
+            <p class="hint">La date apparaîtra dans leur agenda et leurs membres pourront la modifier.</p>` : html`<p class="hint">Aucune autre entité inscrite pour l’instant.</p>`}
           </div>
         </div>
       </details>
