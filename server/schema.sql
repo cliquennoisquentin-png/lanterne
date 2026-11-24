@@ -149,5 +149,10 @@ CREATE INDEX IF NOT EXISTS comments_event_idx ON comments (event_id);
 CREATE INDEX IF NOT EXISTS event_orgs_asso_idx ON event_orgs (association_id);
 CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions (user_id);
 
+-- Connexion par mot de passe (en plus du lien reçu par mail). Le mot de passe n'est jamais gardé en clair :
+-- seulement une empreinte illisible. « email_verified » passe à vrai quand la personne a ouvert un lien reçu par mail.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT false;
+
 -- Petites informations techniques (ex. date de la dernière sauvegarde)
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);

@@ -221,6 +221,82 @@ for (const p of ['/', '/styles.css', '/app.js', '/sw.js', '/manifest.webmanifest
 }
 ok('pages, styles, polices, carte et icônes servis');
 
+// ---------- Comptes avec mot de passe (sans passer par un mail) ----------
+const mailsBefore = fs.readFileSync(LOG, 'utf8').split('[mail]').length;
+const dan = new Client();
+assert.equal((await dan.req('/api/auth/signup', { method: 'POST', body: { name: 'Dan', email: 'dan@pw.test', password: 'court' } })).status, 400);
+assert.equal((await dan.req('/api/auth/signup', { method: 'POST', body: { name: 'Dan', email: 'dan@pw.test', password: 'dan@pw.test' } })).status, 400);
+r = await dan.req('/api/auth/signup', { method: 'POST', body: { name: 'Dan', email: 'Dan@PW.test', password: 'une phrase de passe' } });
+assert.equal(r.status, 200, JSON.stringify(r.data));
+me = (await dan.req('/api/me')).data.user;
+assert.equal(me.email, 'dan@pw.test'); assert.equal(me.has_password, true); assert.equal(me.association, null); assert.equal(me.is_admin, false);
+assert.equal((await new Client().req('/api/auth/signup', { method: 'POST', body: { name: 'X', email: 'dan@pw.test', password: 'autre phrase longue' } })).status, 409);
+assert.equal((await new Client().req('/api/auth/signup', { method: 'POST', body: { name: 'X', email: 'alice@amis.test', password: 'je vole un compte' } })).status, 409);
+assert.equal(fs.readFileSync(LOG, 'utf8').split('[mail]').length, mailsBefore);
+ok('création de compte avec mot de passe : connecté tout de suite, sans mail ; adresse déjà prise refusée');
+
+const bad = await new Client().req('/api/auth/login', { method: 'POST', body: { email: 'dan@pw.test', password: 'mauvaise phrase' } });
+const unknown = await new Client().req('/api/auth/login', { method: 'POST', body: { email: 'personne@pw.test', password: 'une phrase de passe' } });
+const noPw = await new Client().req('/api/auth/login', { method: 'POST', body: { email: 'alice@amis.test', password: 'une phrase de passe' } });
+assert.equal(bad.status, 401); assert.equal(unknown.status, 401); assert.equal(noPw.status, 401);
+assert.equal(bad.data.error, unknown.data.error); assert.equal(bad.data.error, noPw.data.error);
+const dan2 = new Client();
+assert.equal((await dan2.req('/api/auth/login', { method: 'POST', body: { email: 'DAN@pw.test ', password: 'une phrase de passe' } })).status, 200);
+assert.equal((await dan2.req('/api/me')).data.user.email, 'dan@pw.test');
+ok('connexion par mot de passe ; même réponse pour un mauvais mot de passe, une adresse inconnue ou un compte sans mot de passe');
+
+// Changer son mot de passe déconnecte les autres appareils
+assert.equal((await dan.req('/api/me/password', { method: 'PUT', body: { password: 'nouvelle phrase de passe' } })).status, 200);
+assert.equal((await dan.req('/api/me')).data.user.email, 'dan@pw.test');
+assert.equal((await dan2.req('/api/me')).data.user, null);
+assert.equal((await new Client().req('/api/auth/login', { method: 'POST', body: { email: 'dan@pw.test', password: 'une phrase de passe' } })).status, 401);
+assert.equal((await new Client().req('/api/auth/login', { method: 'POST', body: { email: 'dan@pw.test', password: 'nouvelle phrase de passe' } })).status, 200);
+ok('changer son mot de passe : l’ancien ne marche plus, les autres appareils sont déconnectés');
+
+// Un compte « lien par mail » peut ajouter un mot de passe
+assert.equal((await alice.req('/api/me/password', { method: 'PUT', body: { password: 'alice a une phrase' } })).status, 200);
+assert.equal((await new Client().req('/api/auth/login', { method: 'POST', body: { email: 'alice@amis.test', password: 'alice a une phrase' } })).status, 200);
+ok('un membre existant ajoute un mot de passe depuis « Mon compte »');
+
+// Une adresse d'administrateur ne se crée jamais par mot de passe sans le code secret
+// (« npm test » déclare fondateur@lanterne.test comme administrateur et règle ADMIN_SETUP_CODE)
+if (process.env.ADMIN_SETUP_CODE) {
+  const founder = (body) => new Client().req('/api/auth/signup', { method: 'POST', body: { name: 'Fondateur', email: 'fondateur@lanterne.test', password: 'je deviens admin', ...body } });
+  r = await founder({});
+  assert.equal(r.status, 403); assert.equal(r.data.code, 'admin_code');
+  assert.equal((await founder({ admin_code: 'au hasard pour voir' })).status, 403);
+  const f = new Client();
+  r = await f.req('/api/auth/signup', { method: 'POST', body: { name: 'Fondateur', email: 'fondateur@lanterne.test', password: 'je deviens admin', admin_code: process.env.ADMIN_SETUP_CODE } });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal((await f.req('/api/me')).data.user.is_admin, true);
+  assert.equal((await f.req('/api/admin/overview')).status, 200);
+  ok('une adresse d’administrateur ne se crée par mot de passe qu’avec le code secret');
+}
+
+// Quelqu'un crée un compte avec l'adresse d'un autre : quand le vrai propriétaire ouvre un lien reçu par mail,
+// le mot de passe de l'usurpateur est effacé et ses sessions fermées
+const thief = new Client();
+assert.equal((await thief.req('/api/auth/signup', { method: 'POST', body: { name: 'Usurpateur', email: 'eve@vrai.test', password: 'pas mon adresse' } })).status, 200);
+const eve = await login('eve@vrai.test');
+assert.equal((await thief.req('/api/me')).data.user, null);
+assert.equal((await new Client().req('/api/auth/login', { method: 'POST', body: { email: 'eve@vrai.test', password: 'pas mon adresse' } })).status, 401);
+me = (await eve.req('/api/me')).data.user;
+assert.equal(me.has_password, false);
+ok('adresse confirmée par mail : le mot de passe posé avant par quelqu’un d’autre est effacé, ses sessions fermées');
+
+// Inscription d'une association avec mot de passe : connecté tout de suite, aucun lien de connexion envoyé
+const fred = new Client();
+const mailsBefore2 = fs.readFileSync(LOG, 'utf8').split('[mail]').filter((b) => b.includes('À : fred@asso.test')).length;
+r = await fred.req('/api/register', { method: 'POST', body: { association: { name: 'Les Jardins Partagés', color: '#2F9533' }, person: { name: 'Fred', email: 'fred@asso.test', password: 'des tomates partout' } } });
+assert.equal(r.status, 200, JSON.stringify(r.data)); assert.equal(r.data.logged_in, true);
+me = (await fred.req('/api/me')).data.user;
+assert.equal(me.association.status, 'pending'); assert.equal(me.has_password, true);
+await new Promise((res) => setTimeout(res, 100));
+assert.equal(fs.readFileSync(LOG, 'utf8').split('[mail]').filter((b) => b.includes('À : fred@asso.test')).length, mailsBefore2);
+r = await new Client().req('/api/register', { method: 'POST', body: { association: { name: 'Autre asso' }, person: { name: 'X', email: 'dan@pw.test', password: 'je prends le compte' } } });
+assert.equal(r.status, 409);
+ok('inscription d’une association avec mot de passe : connecté tout de suite, en attente de validation ; compte existant protégé');
+
 // État de santé (interrogé par Railway avant de basculer sur une nouvelle version)
 const health = await fetch(`${BASE}/health`);
 assert.equal(health.status, 200);

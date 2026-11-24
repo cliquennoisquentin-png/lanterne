@@ -21,6 +21,10 @@
   --nav-h: 62px;
 }
 
+/* Un élément marqué « hidden » reste caché, même si une règle plus bas lui donne un affichage
+   (sinon les filtres de l'annuaire, la fenêtre d'abonnement et le code administrateur ne se cachaient pas) */
+[hidden] { display: none !important; }
+
 /* Thème sombre (par défaut) */
 :root, [data-theme="dark"] {
   color-scheme: dark;
@@ -682,6 +686,13 @@ dialog.modal.closing::backdrop { animation: backout .19s ease both; }
 .day-free { display: flex; align-items: center; gap: 8px; margin: 0; font-size: .86rem; color: var(--text-3); }
 .day-free .lantern { width: 12px; height: 16px; flex: none; }
 [data-day-busy]:empty { display: none; }
+
+/* Connexion par mot de passe */
+.login-switch { display: flex; margin: 0 auto 14px; width: fit-content; }
+.field > .pw-field { display: flex; gap: 6px; align-items: center; margin: 0; font-size: 1rem; color: var(--text); }
+.pw-field .input { flex: 1; min-width: 0; }
+.pw-field .btn { flex: none; min-width: 84px; }
+.field > .hint { display: block; margin: 5px 0 0; font-size: .8rem; color: var(--text-3); }
 
 /* Liste : recherche et export */
 .list-tools { margin-bottom: 10px; }

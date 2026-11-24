@@ -22,8 +22,11 @@ const base = `http://localhost:${port}`;
 
 // Environnement propre : jamais la vraie base, jamais de vrai mail
 const RATE = 500; // plafond d'appels par minute, abaissé pour pouvoir le vérifier
-const env = { ...process.env, PORT: String(port), ADMIN_EMAILS: 'admin@lanterne.test', PGLITE_DIR: path.join(tmp, 'base'), NODE_ENV: 'test', API_RATE_LIMIT: String(RATE) };
-for (const k of ['DATABASE_URL', 'BREVO_API_KEY', 'RESEND_API_KEY', 'PUBLIC_URL', 'RAILWAY_PUBLIC_DOMAIN', 'BACKUP_EMAILS']) delete env[k];
+const env = {
+  ...process.env, PORT: String(port), ADMIN_EMAILS: 'admin@lanterne.test,fondateur@lanterne.test', PGLITE_DIR: path.join(tmp, 'base'),
+  NODE_ENV: 'test', API_RATE_LIMIT: String(RATE), ADMIN_SETUP_CODE: `code-de-test-${Date.now()}`,
+};
+for (const k of ['DATABASE_URL', 'BREVO_API_KEY', 'RESEND_API_KEY', 'PUBLIC_URL', 'RAILWAY_PUBLIC_DOMAIN', 'BACKUP_EMAILS', 'PASSWORD_LOGIN']) delete env[k];
 
 const log = fs.openSync(logFile, 'w');
 const server = spawn(process.execPath, ['server/index.js'], { cwd: root, env, stdio: ['ignore', log, log] });

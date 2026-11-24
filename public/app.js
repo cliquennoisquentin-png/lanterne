@@ -3,7 +3,7 @@ import { html, raw, $, $$, icon, logo, api, toast, STATUS, TYPES, storage } from
 import { state, isMember, isAdmin, navigate, setRenderer, loadAssos, loadEvents, saveFilters, filtersActive, invalidate, requireLoginToast, placeKey } from './core.js';
 import { monthView, listView, mapView, eventView, mapStyle } from './views-agenda.js';
 import { eventForm } from './views-form.js';
-import { directoryView, profileView, registerView, loginView, accountView, adminView, legalView, authVerifyView, authInviteView } from './views-other.js';
+import { directoryView, profileView, registerView, loginView, signupView, accountView, adminView, legalView, authVerifyView, authInviteView } from './views-other.js';
 import { playSplash } from './splash.js';
 import { watchUpdates } from './update.js';
 
@@ -83,7 +83,7 @@ function renderShell() {
       ${isAdmin() ? '' : html`<a href="/liste" ${cur(inList)}>${icon('list')}<span>Liste</span></a>`}
       <a href="/associations" ${cur(path.startsWith('/associations') || path.startsWith('/inscription'))}>${icon('users')}<span>Assos</span></a>
       ${isAdmin() ? html`<a href="/admin" ${cur(path.startsWith('/admin'))}>${icon('shield')}<span>Admin</span></a>` : ''}
-      <a href="${u ? '/compte' : '/connexion'}" ${cur(path.startsWith('/compte') || path.startsWith('/connexion'))}>${icon('user')}<span>${u ? 'Compte' : 'Connexion'}</span></a>
+      <a href="${u ? '/compte' : '/connexion'}" ${cur(path.startsWith('/compte') || path.startsWith('/connexion') || path.startsWith('/creer-un-compte'))}>${icon('user')}<span>${u ? 'Compte' : 'Connexion'}</span></a>
     </nav>
     ${isMember() && !path.startsWith('/nouveau') && !path.endsWith('/modifier') ? html`<button class="fab" data-fab aria-label="Poser une nouvelle date" title="Nouvelle date">${icon('plus')}</button>` : ''}`);
   $('[data-theme-toggle]', shell).addEventListener('click', () => setTheme(dark ? 'light' : 'dark'));
@@ -161,6 +161,7 @@ const routes = [
   [/^\/associations\/([^/]+)\/?$/, (m) => profileView(decodeURIComponent(m[1]))],
   [/^\/inscription\/?$/, () => registerView()],
   [/^\/connexion\/?$/, () => loginView()],
+  [/^\/creer-un-compte\/?$/, () => signupView()],
   [/^\/compte\/?$/, () => accountView()],
   [/^\/admin\/?$/, () => adminView()],
   [/^\/mentions-legales\/?$/, () => legalView()],
@@ -222,6 +223,7 @@ window.addEventListener('unhandledrejection', (ev) => {
   try {
     const cfg = await api('/api/config');
     state.user = cfg.user; state.palette = cfg.palette; state.categories = cfg.categories;
+    state.passwordLogin = cfg.password_login !== false;
     window.lanterne.contact = cfg.contact || '';
     watchUpdates(cfg.version);
   } catch (err) {

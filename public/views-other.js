@@ -178,24 +178,36 @@ export function registerView() {
       <h2>Vous</h2>
       <div class="grid-2">
         <label class="field"><span>Votre nom <span class="req">*</span></span><input class="input" name="person_name" value="${state.user?.name || ''}" autocomplete="name" required></label>
-        <label class="field"><span>Votre mail <span class="req">*</span></span><input class="input" type="email" name="person_email" value="${state.user?.email || ''}" ${state.user ? 'readonly' : ''} autocomplete="email" required></label>
+        <label class="field"><span>Votre mail <span class="req">*</span></span><input class="input" type="email" name="person_email" value="${state.user?.email || ''}" ${state.user ? 'readonly' : ''} autocomplete="${state.user ? 'email' : 'username'}" required></label>
       </div>
+      ${!state.user && state.passwordLogin ? html`${passwordField('person_password', 'Choisissez un mot de passe', 'new-password', html`<span class="hint">8 caractères au moins. Vous serez connecté tout de suite, sans attendre de mail. Laissez vide pour recevoir plutôt un lien de connexion par mail.</span>`)}
+        <p class="small faint" style="margin:0">Déjà un compte ? <a href="/connexion">Connectez-vous d’abord</a>, puis revenez ici.</p>` : ''}
       <p class="hint">Nous ne gardons que votre nom, votre mail et votre association. <a href="/mentions-legales">Confidentialité</a>.</p>
       <p class="error-text" data-err role="alert"></p>
       <div><button class="btn primary">Envoyer l’inscription</button></div>
     </form></div>`);
   const form = $('[data-reg]');
   bindAssoFields(form, {}, holder);
+  bindPasswordFields(form);
+  const pwInput = form.querySelector('[name=person_password]');
+  if (pwInput) pwInput.required = false; // facultatif ici : sans mot de passe, on reçoit un lien par mail
   form.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const f = new FormData(form);
+    const password = f.get('person_password') || '';
+    if (password && password.length < 8) { $('[data-err]').textContent = 'Le mot de passe doit faire au moins 8 caractères (ou laissez-le vide).'; return; }
     const body = {
       association: { name: f.get('name'), color: holder.color, logo: holder.logo || null, description: f.get('description'), contact_email: f.get('contact_email') || f.get('person_email'), phone: f.get('phone'), website: f.get('website'), commune: f.get('commune') },
-      person: { name: f.get('person_name'), email: f.get('person_email') },
+      person: { name: f.get('person_name'), email: f.get('person_email'), ...(password ? { password } : {}) },
     };
     const btn = form.querySelector('button.primary'); btn.disabled = true;
     try {
-      await api('/api/register', { method: 'POST', body });
+      const r = await api('/api/register', { method: 'POST', body });
+      if (r.logged_in) {
+        await afterAuth('/');
+        toast('Inscription envoyée, vous êtes connecté. Vous pourrez poser vos dates dès la validation.');
+        return;
+      }
       if (state.user) { await refreshMe(); toast('Inscription envoyée.'); navigate('/'); return; }
       main().innerHTML = String(html`<div class="narrow hero-login">${logo('logo-mark pulse')}<h1>Inscription envoyée</h1>
         <p class="muted">Nous vous avons envoyé un lien de connexion à <b>${body.person.email}</b>.<br>Un administrateur va vérifier votre association : vous recevrez un mail dès qu’elle sera validée.</p></div>`);
@@ -206,30 +218,102 @@ export function registerView() {
 // =====================================================================
 // CONNEXION PAR LIEN MAGIQUE
 // =====================================================================
+// Champ mot de passe avec un bouton « Afficher » (plus simple sur téléphone qu'une double saisie)
+const passwordField = (name, label, autocomplete, extra = '') => html`<label class="field"><span>${label}</span>
+  <span class="pw-field"><input class="input" type="password" name="${name}" autocomplete="${autocomplete}" required minlength="8" maxlength="200">
+  <button type="button" class="btn small ghost" data-show-pw aria-pressed="false">Afficher</button></span>${extra}</label>`;
+function bindPasswordFields(root) {
+  $$('[data-show-pw]', root).forEach((b) => b.addEventListener('click', () => {
+    const input = b.previousElementSibling;
+    const show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    b.textContent = show ? 'Masquer' : 'Afficher';
+    b.setAttribute('aria-pressed', String(show));
+  }));
+}
+const afterAuth = async (to) => { await refreshMe(); invalidate(); window.lanterne.renderShell(); navigate(to || '/', { replace: true }); window.scrollTo({ top: 0 }); };
+
 export function loginView() {
   if (state.user) { navigate('/compte', { replace: true }); return; }
   const errors = { lien: 'Ce lien de connexion a expiré ou a déjà servi. Demandez-en un nouveau.', invitation: 'Cette invitation a expiré ou a déjà servi. Demandez une nouvelle invitation à votre association.', 'deja-membre': 'Cette adresse est déjà rattachée à une autre association.' };
   const e = errors[params().get('erreur')];
+  const withPassword = state.passwordLogin && params().get('par') !== 'mail';
   main().innerHTML = String(html`<div class="narrow" style="max-width:460px">
-    <div class="hero-login">${logo('logo-mark pulse')}<h1>Connexion</h1><p class="muted">Pas de mot de passe : saisissez votre mail, cliquez sur le lien reçu.</p></div>
+    <div class="hero-login">${logo('logo-mark pulse')}<h1>Connexion</h1>
+      <p class="muted">${withPassword ? 'Avec votre mail et votre mot de passe.' : 'Saisissez votre mail, cliquez sur le lien reçu.'}</p></div>
     ${e ? html`<p class="notice warn">${e}</p>` : ''}
+    ${state.passwordLogin ? html`<div class="segmented login-switch" role="group" aria-label="Façon de se connecter">
+      <a href="/connexion" ${withPassword ? raw('aria-current="page"') : ''}>Mot de passe</a>
+      <a href="/connexion?par=mail" ${!withPassword ? raw('aria-current="page"') : ''}>${icon('mail')}Lien par mail</a></div>` : ''}
     <form class="card stack" data-login>
-      <label class="field"><span>Votre adresse mail</span><input class="input" type="email" name="email" autocomplete="email" required autofocus placeholder="vous@association.fr"></label>
+      <label class="field"><span>Votre adresse mail</span><input class="input" type="email" name="email" autocomplete="${withPassword ? 'username' : 'email'}" required autofocus placeholder="vous@association.fr"></label>
+      ${withPassword ? passwordField('password', 'Mot de passe', 'current-password') : ''}
       <p class="error-text" data-err role="alert"></p>
-      <button class="btn primary">Recevoir mon lien de connexion</button>
+      <button class="btn primary">${withPassword ? 'Se connecter' : 'Recevoir mon lien de connexion'}</button>
+      ${withPassword ? html`<p class="small faint" style="margin:0">Mot de passe oublié, ou jamais choisi ? <a href="/connexion?par=mail">Recevez un lien par mail</a>, puis choisissez-en un dans « Mon compte ».</p>` : ''}
     </form>
-    <p class="small muted" style="text-align:center;margin-top:18px">Votre association n’est pas encore sur Lanterne ? <a href="/inscription">Inscrivez-la</a>.<br>Elle y est déjà ? Demandez à un membre de vous inviter.</p>
+    <p class="small muted" style="text-align:center;margin-top:18px">
+      ${state.passwordLogin ? html`Pas encore de compte ? <a href="/creer-un-compte">Créez-le</a>, c’est immédiat.<br>` : ''}
+      Votre association n’est pas encore sur Lanterne ? <a href="/inscription">Inscrivez-la</a>.<br>Elle y est déjà ? Demandez à un membre de vous inviter.</p>
   </div>`);
+  bindPasswordFields(main());
   $('[data-login]').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const email = ev.target.email.value.trim();
-    const btn = ev.target.querySelector('button'); btn.disabled = true;
+    const btn = ev.target.querySelector('button.primary'); btn.disabled = true;
     try {
+      if (withPassword) {
+        const r = await api('/api/auth/login', { method: 'POST', body: { email, password: ev.target.password.value } });
+        await afterAuth(r.redirect);
+        toast('Vous êtes connecté.');
+        return;
+      }
       await api('/api/auth/request', { method: 'POST', body: { email } });
       main().innerHTML = String(html`<div class="narrow hero-login" style="max-width:460px">${logo('logo-mark pulse')}<h1>Regardez vos mails</h1>
         <p class="muted">Si un compte existe pour <b>${email}</b>, un lien de connexion vient d’y être envoyé. Il est valable 30 minutes.</p>
-        <p class="small faint">Rien reçu ? Vérifiez les indésirables, ou <a href="/connexion">recommencez</a>.</p></div>`);
+        <p class="small faint">Rien reçu ? Vérifiez les indésirables, ou <a href="/connexion?par=mail">recommencez</a>.</p></div>`);
     } catch (err) { $('[data-err]').textContent = err.message; btn.disabled = false; }
+  });
+}
+
+// =====================================================================
+// CRÉER UN COMPTE (mot de passe choisi soi-même, sans attendre de mail)
+// =====================================================================
+export function signupView() {
+  if (state.user) { navigate('/compte', { replace: true }); return; }
+  if (!state.passwordLogin) { navigate('/connexion', { replace: true }); return; }
+  main().innerHTML = String(html`<div class="narrow" style="max-width:460px">
+    <div class="hero-login">${logo('logo-mark pulse')}<h1>Créer un compte</h1>
+      <p class="muted">Choisissez votre mot de passe : vous êtes connecté tout de suite.</p></div>
+    <form class="card stack" data-signup novalidate>
+      <label class="field"><span>Votre nom <span class="req">*</span></span><input class="input" name="name" autocomplete="name" maxlength="80" required autofocus></label>
+      <label class="field"><span>Votre adresse mail <span class="req">*</span></span><input class="input" type="email" name="email" autocomplete="username" required placeholder="vous@association.fr"></label>
+      ${passwordField('password', html`Mot de passe <span class="req">*</span>`, 'new-password', html`<span class="hint">8 caractères au moins. Une petite phrase est plus sûre et plus facile à retenir.</span>`)}
+      <label class="field" data-admin-code hidden><span>Code administrateur</span><input class="input" name="admin_code" autocomplete="off">
+        <span class="hint">Cette adresse est celle d’un administrateur : le code vous a été donné avec l’accès à Lanterne.</span></label>
+      <p class="hint">Nous ne gardons que votre nom, votre mail et votre association. <a href="/mentions-legales">Confidentialité</a>.</p>
+      <p class="error-text" data-err role="alert"></p>
+      <button class="btn primary">Créer mon compte</button>
+    </form>
+    <p class="small muted" style="text-align:center;margin-top:18px">Déjà un compte ? <a href="/connexion">Connectez-vous</a>.</p>
+  </div>`);
+  const form = $('[data-signup]');
+  bindPasswordFields(form);
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const f = new FormData(form);
+    const err = $('[data-err]');
+    if (!String(f.get('name')).trim()) { err.textContent = 'Indiquez votre nom.'; return; }
+    if (String(f.get('password')).length < 8) { err.textContent = 'Le mot de passe doit faire au moins 8 caractères.'; return; }
+    const btn = form.querySelector('button.primary'); btn.disabled = true; err.textContent = '';
+    try {
+      await api('/api/auth/signup', { method: 'POST', body: { name: f.get('name'), email: f.get('email'), password: f.get('password'), admin_code: f.get('admin_code') || undefined } });
+      await afterAuth('/compte?nouveau=1');
+      toast('Compte créé : vous êtes connecté.');
+    } catch (e2) {
+      if (e2.code === 'admin_code') { const box = $('[data-admin-code]'); box.hidden = false; box.querySelector('input').focus(); }
+      err.textContent = e2.message; btn.disabled = false;
+    }
   });
 }
 
@@ -289,14 +373,28 @@ export function accountView() {
   const u = state.user;
   if (!u) { navigate('/connexion', { replace: true }); return; }
   const welcome = params().get('bienvenue') === '1';
+  const fresh = params().get('nouveau') === '1';
+  const pwCleared = params().get('motdepasse') === 'efface';
   main().innerHTML = String(html`<div class="narrow">
-    <div class="page-head"><h1>${welcome ? 'Bienvenue sur Lanterne' : 'Mon compte'}</h1></div>
+    <div class="page-head"><h1>${welcome || fresh ? 'Bienvenue sur Lanterne' : 'Mon compte'}</h1></div>
+    ${fresh && !u.association ? html`<div class="notice info" style="margin-bottom:14px"><b>Votre compte est créé.</b> Prochaine étape :
+      <a href="/inscription">inscrire votre association</a>, ou, si elle est déjà sur Lanterne, demander à un de ses membres de vous inviter
+      (avec l’adresse ${u.email}).</div>` : ''}
+    ${pwCleared ? html`<div class="notice warn" style="margin-bottom:14px">${icon('lock')} Par sécurité, l’ancien mot de passe de ce compte a été effacé :
+      il avait été choisi avant que l’adresse soit confirmée. Choisissez-en un nouveau ci-dessous.</div>` : ''}
     <form class="card stack" data-name>
       <h2>${welcome ? 'Comment vous appelez-vous ?' : 'Mon nom'}</h2>
       <label class="field"><span>Nom affiché à côté de vos commentaires</span><input class="input" name="name" value="${u.name}" maxlength="80" required autocomplete="name" ${welcome ? 'autofocus' : ''}></label>
       <p class="small faint">Connecté avec ${u.email}</p>
       <div><button class="btn primary">Enregistrer</button></div>
     </form>
+    ${state.passwordLogin ? html`<form class="card stack" data-password>
+      <h2>Mot de passe</h2>
+      <p class="small muted" style="margin:0">${u.has_password ? 'Vous pouvez vous connecter avec votre mail et votre mot de passe. Le changer déconnecte vos autres appareils.' : 'Choisissez un mot de passe pour vous connecter sans attendre de mail.'}</p>
+      <input type="email" name="username" value="${u.email}" autocomplete="username" hidden>
+      ${passwordField('password', u.has_password ? 'Nouveau mot de passe' : 'Mot de passe', 'new-password', html`<span class="hint">8 caractères au moins.</span>`)}
+      <div><button class="btn primary">${u.has_password ? 'Changer le mot de passe' : 'Enregistrer le mot de passe'}</button></div>
+    </form>` : ''}
     <div class="card"><h2>Mon association</h2>
       ${u.association ? html`<div class="row"><a class="chip-asso" style="--c:${u.association.color}" href="/associations/${u.association.slug}"><span class="dot"></span>${u.association.name}</a>
         ${u.association.status !== 'approved' ? html`<span class="status option">${u.association.status === 'pending' ? 'En attente de validation' : 'Refusée'}</span>` : ''}
@@ -322,6 +420,22 @@ export function accountView() {
     ev.preventDefault();
     try { await api('/api/me', { method: 'PUT', body: { name: ev.target.name.value } }); await refreshMe(); window.lanterne.renderShell(); toast('C’est enregistré.'); if (welcome) navigate('/'); } catch (err) { toast(err.message, 'error'); }
   });
+  const pwForm = $('[data-password]');
+  if (pwForm) {
+    bindPasswordFields(pwForm);
+    if (pwCleared) pwForm.password.focus();
+    pwForm.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const password = pwForm.password.value;
+      if (password.length < 8) { toast('Le mot de passe doit faire au moins 8 caractères.', 'error'); return; }
+      const btn = pwForm.querySelector('button.primary'); btn.disabled = true;
+      try {
+        await api('/api/me/password', { method: 'PUT', body: { password } });
+        await refreshMe(); toast('Mot de passe enregistré.');
+        history.replaceState({}, '', '/compte'); accountView();
+      } catch (err) { toast(err.message, 'error'); btn.disabled = false; }
+    });
+  }
   $('[data-sub]').addEventListener('click', () => openSubscribe());
   $('[data-regen]').addEventListener('click', async () => {
     if (!(await confirmBox('Créer un nouveau lien ?', 'Les agendas abonnés avec l’ancien lien ne recevront plus les mises à jour. Utile si vous l’avez partagé par erreur.', 'Créer un nouveau lien'))) return;
@@ -479,7 +593,7 @@ export function legalView() {
     <h2>Hébergement</h2>
     <p>Railway Corporation (railway.com), San Francisco, États-Unis. Les données sont hébergées dans la région choisie pour le service.</p>
     <h2>Données personnelles</h2>
-    <p>Pour chaque membre, Lanterne ne conserve que <b>son nom, son adresse mail et son association</b>. Ces données servent uniquement à vous connecter, à afficher l’auteur des commentaires et des modifications, et à vous envoyer les mails nécessaires (lien de connexion, invitation, validation de votre association). Elles ne sont ni vendues, ni partagées, ni utilisées pour de la publicité.</p>
+    <p>Pour chaque membre, Lanterne ne conserve que <b>son nom, son adresse mail et son association</b>, et, si la personne en a choisi un, une empreinte de son mot de passe : un code illisible dont on ne peut pas retrouver le mot de passe. Le mot de passe lui-même n’est jamais enregistré. Ces données servent uniquement à vous connecter, à afficher l’auteur des commentaires et des modifications, et à vous envoyer les mails nécessaires (lien de connexion, invitation, validation de votre association). Elles ne sont ni vendues, ni partagées, ni utilisées pour de la publicité.</p>
     <p>Base légale : l’intérêt légitime des associations à coordonner leurs dates, et votre demande d’inscription.</p>
     <p>Un historique des modifications (qui a modifié quoi) est conservé pour pouvoir revenir en arrière en cas d’erreur.</p>
     <p><b>Suppression :</b> vous pouvez supprimer votre compte à tout moment depuis « Mon compte ». Votre nom et votre mail sont alors effacés ; vos commentaires et modifications passées apparaissent comme « Compte supprimé ».</p>

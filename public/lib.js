@@ -36,6 +36,7 @@ export async function api(path, { method = 'GET', body } = {}) {
   if (!res.ok) {
     const err = new Error(data?.error || (res.status === 0 || !navigator.onLine ? 'Pas de connexion.' : 'Une erreur est survenue.'));
     err.status = res.status;
+    err.code = data?.code;
     throw err;
   }
   return data;

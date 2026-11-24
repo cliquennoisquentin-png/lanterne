@@ -5,6 +5,7 @@ export const state = {
   user: null,
   palette: [],
   categories: [],
+  passwordLogin: true, // connexion par mot de passe proposée (réglage PASSWORD_LOGIN du serveur)
   assos: [],
   venues: null,
   filters: storage.get('lanterne-filters', { assos: [], cats: [], places: [], statuses: [], types: [] }),

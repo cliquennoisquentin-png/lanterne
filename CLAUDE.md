@@ -48,9 +48,18 @@ code, les commits et la documentation.
    `eventDays`…). Jamais `new Date().getHours()` ni de fuseau du navigateur.
 8. **Aucun secret dans le dépôt.** Les clés vivent dans `.env` (ignoré par git) ou dans Railway.
 9. **On ne révèle pas qui a un compte** : `/api/auth/request` répond pareil pour une adresse connue ou non,
-   et n'envoie aucun mail à une adresse inconnue.
+   et n'envoie aucun mail à une adresse inconnue ; `/api/auth/login` donne le même message (et met le même
+   temps) pour un mauvais mot de passe, une adresse inconnue ou un compte sans mot de passe.
 10. **On supprime rarement pour de bon** : une date supprimée est masquée (`deleted_at`), une date annulée
     reste affichée barrée, et chaque modification laisse une trace dans `history` pour revenir en arrière.
+11. **Mots de passe** : jamais gardés en clair, seulement une empreinte `scrypt` (`hashPassword` dans
+    `server/index.js`). Un compte créé par mot de passe n'a **pas d'adresse prouvée** (`email_verified = false`) :
+    - le premier lien reçu par mail pour cette adresse efface ce mot de passe et ferme ses sessions (`confirmEmail`),
+      sauf si la personne était déjà connectée à ce même compte en ouvrant le lien ;
+    - une adresse de `ADMIN_EMAILS` ne se crée par mot de passe qu'avec `ADMIN_SETUP_CODE` ;
+    - un compte ainsi créé ne rejoint une association que par l'inscription (validée par un administrateur)
+      ou par une invitation reçue par mail. Nommer administrateur un compte non confirmé reste possible :
+      c'est une décision humaine, prise dans l'onglet Administrateurs.
 
 ## Décisions prises (et pourquoi)
 
@@ -67,6 +76,11 @@ code, les commits et la documentation.
   des limites fines sur la connexion, l'inscription, les invitations et les commentaires.
 - **`/health` vérifie aussi la base** : Railway garde l'ancienne version en ligne tant que la nouvelle ne
   répond pas.
+- **Connexion par mot de passe en plus du lien par mail** (novembre 2026) : demandée pour pouvoir créer un
+  compte tout de suite, sans dépendre de l'envoi des mails. On peut la couper avec `PASSWORD_LOGIN=off`.
+  Les sauvegardes contiennent les empreintes des mots de passe (pas les mots de passe).
+- **Un élément `hidden` reste toujours caché** (`[hidden] { display: none !important; }` en tête de
+  `styles.css`) : sans cette règle, `.field` ou les cartes l'emportaient et l'affichaient quand même.
 - **Les tests ne lisent pas `.env`** (`NODE_ENV=test`) : impossible de toucher la vraie base par accident.
 
 ## Pas dans cette version

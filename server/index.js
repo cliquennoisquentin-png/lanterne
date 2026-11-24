@@ -39,8 +39,8 @@ const str = (v, max = 500) => String(v ?? '').trim().slice(0, max);
 const slugify = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'asso';
 const safeUrl = (u) => { const s = str(u, 500); if (!s) return ''; const v = /^https?:\/\//i.test(s) ? s : `https://${s}`; try { const x = new URL(v); return ['http:', 'https:'].includes(x.protocol) ? x.toString() : ''; } catch { return ''; } };
 
-class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
-const fail = (status, message) => { throw new HttpError(status, message); };
+class HttpError extends Error { constructor(status, message, code) { super(message); this.status = status; this.code = code; } }
+const fail = (status, message, code) => { throw new HttpError(status, message, code); };
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 function baseUrl(req) {
@@ -176,6 +176,65 @@ async function ensureUser(email, extra = {}) {
   return u;
 }
 
+// ---------- mots de passe ----------
+// Connexion par mot de passe, en plus du lien reçu par mail. PASSWORD_LOGIN=off la coupe d'un seul réglage.
+const PASSWORD_LOGIN = String(process.env.PASSWORD_LOGIN || '').toLowerCase() !== 'off';
+const PASSWORD_MIN = 8;
+// Une adresse d'administrateur ne peut créer son compte par mot de passe qu'avec ce code secret (réglé sur
+// Railway). Sans code réglé, un administrateur passe forcément par le lien reçu par mail.
+const ADMIN_SETUP_CODE = String(process.env.ADMIN_SETUP_CODE || '').trim();
+if (ADMIN_SETUP_CODE && ADMIN_SETUP_CODE.length < 12) console.error('[lanterne] ADMIN_SETUP_CODE est trop court (12 caractères minimum) : il est ignoré.');
+const adminCodeOk = (v) => {
+  if (ADMIN_SETUP_CODE.length < 12) return false;
+  const a = crypto.createHash('sha256').update(String(v ?? '')).digest();
+  const b = crypto.createHash('sha256').update(ADMIN_SETUP_CODE).digest();
+  return crypto.timingSafeEqual(a, b);
+};
+
+// On ne garde jamais le mot de passe : seulement une empreinte « scrypt », lente à calculer exprès
+// (un voleur de la base ne peut pas retrouver les mots de passe en les essayant par millions).
+const SCRYPT = { N: 32768, r: 8, p: 1 };
+const scrypt = (pw, salt, { N, r, p }) => new Promise((resolve, reject) => {
+  crypto.scrypt(pw.normalize('NFKC'), salt, 64, { N, r, p, maxmem: 256 * N * r }, (err, key) => (err ? reject(err) : resolve(key)));
+});
+async function hashPassword(pw) {
+  const salt = crypto.randomBytes(16);
+  const key = await scrypt(pw, salt, SCRYPT);
+  return `scrypt$${SCRYPT.N}$${SCRYPT.r}$${SCRYPT.p}$${salt.toString('base64url')}$${key.toString('base64url')}`;
+}
+async function checkPassword(pw, stored) {
+  const [kind, N, r, p, salt, hash] = String(stored || '').split('$');
+  if (kind !== 'scrypt' || !hash) return false;
+  const expected = Buffer.from(hash, 'base64url');
+  const key = await scrypt(pw, Buffer.from(salt, 'base64url'), { N: Number(N), r: Number(r), p: Number(p) }).catch(() => null);
+  return !!key && key.length === expected.length && crypto.timingSafeEqual(key, expected);
+}
+// Empreinte factice : pour une adresse inconnue, on fait le même calcul que pour une vraie (même temps de réponse)
+const DUMMY_HASH = await hashPassword(token());
+
+function passwordInput(v, email = '') {
+  if (!PASSWORD_LOGIN) fail(403, 'La connexion par mot de passe est désactivée : demandez un lien de connexion par mail.');
+  const pw = typeof v === 'string' ? v : '';
+  if (pw.length < PASSWORD_MIN) fail(400, `Le mot de passe doit faire au moins ${PASSWORD_MIN} caractères.`);
+  if (pw.length > 200) fail(400, 'Mot de passe trop long (200 caractères maximum).');
+  if (email && pw.toLowerCase() === email) fail(400, 'Choisissez un mot de passe différent de votre adresse mail.');
+  return pw;
+}
+
+// Un lien reçu par mail prouve que l'adresse appartient bien à la personne. Si un mot de passe avait été
+// posé avant cette preuve (peut-être par quelqu'un d'autre, avec une adresse qui n'est pas la sienne),
+// on l'efface et on ferme toutes les sessions ouvertes : le vrai propriétaire en choisira un nouveau.
+// Exception : la personne ouvre le lien en étant déjà connectée à ce même compte. Elle a donc à la fois
+// le mot de passe et la boîte mail : c'est bien elle, on garde son mot de passe.
+async function confirmEmail(u, req) {
+  if (u.email_verified) return false;
+  if (req.user?.id === u.id) { await q('UPDATE users SET email_verified = true WHERE id = $1', [u.id]); return false; }
+  await q('UPDATE users SET email_verified = true, password_hash = NULL WHERE id = $1', [u.id]);
+  if (u.password_hash) await q('DELETE FROM sessions WHERE user_id = $1', [u.id]);
+  return !!u.password_hash;
+}
+const afterLogin = (u, passwordCleared) => (passwordCleared ? '/compte?motdepasse=efface' : (u.name ? '/' : '/compte?bienvenue=1'));
+
 async function logHistory(db, { entity, entityId, action, user, before = null, after = null }) {
   await db.query(
     'INSERT INTO history (entity, entity_id, action, user_id, user_name, association_name, before, after) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
@@ -186,7 +245,7 @@ async function logHistory(db, { entity, entityId, action, user, before = null, a
 function publicUser(u) {
   if (!u) return null;
   return {
-    id: u.id, email: u.email, name: u.name, is_admin: u.is_admin, ics_token: u.ics_token,
+    id: u.id, email: u.email, name: u.name, is_admin: u.is_admin, ics_token: u.ics_token, has_password: !!u.password_hash,
     association: u.association_id ? { id: u.association_id, name: u.asso_name, slug: u.asso_slug, color: u.asso_color, status: u.asso_status } : null,
   };
 }
@@ -210,7 +269,7 @@ app.get('/health', async (req, res) => {
 // ---------- configuration ----------
 app.get('/api/config', wrap(async (req, res) => {
   const categories = await all('SELECT id, name, position, active FROM categories ORDER BY position, name');
-  res.json({ palette: PALETTE, categories, user: publicUser(req.user), contact: process.env.CONTACT_EMAIL || '', version: VERSION });
+  res.json({ palette: PALETTE, categories, user: publicUser(req.user), contact: process.env.CONTACT_EMAIL || '', version: VERSION, password_login: PASSWORD_LOGIN });
 }));
 
 // ---------- authentification ----------
@@ -240,8 +299,43 @@ app.post('/api/auth/verify', wrap(async (req, res) => {
   const row = t && await one(`UPDATE login_tokens SET used_at = now() WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now() RETURNING email`, [sha(t)]);
   if (!row) fail(410, 'Ce lien de connexion a expiré ou a déjà servi. Demandez-en un nouveau.');
   const u = await ensureUser(row.email);
+  const cleared = await confirmEmail(u, req);
   await createSession(res, u.id);
-  res.json({ redirect: u.name ? '/' : '/compte?bienvenue=1' });
+  res.json({ redirect: afterLogin(u, cleared) });
+}));
+
+// Créer son compte soi-même, avec un mot de passe : aucun mail nécessaire.
+// Contrepartie : rien ne prouve que l'adresse appartient à la personne (voir confirmEmail). C'est pourquoi
+// une adresse d'administrateur exige un code secret, et qu'un compte créé ainsi ne rejoint aucune association.
+app.post('/api/auth/signup', wrap(async (req, res) => {
+  const email = normEmail(req.body.email);
+  const name = str(req.body.name, 80);
+  if (!isEmail(email)) fail(400, 'Adresse mail invalide.');
+  if (!name) fail(400, 'Indiquez votre nom.');
+  const pw = passwordInput(req.body.password, email);
+  if (limited(`su:${req.ip}`, 10, 60 * 60e3)) fail(429, 'Trop de créations de compte. Réessayez plus tard.');
+  if (await one('SELECT 1 FROM users WHERE email = $1', [email])) fail(409, 'Un compte existe déjà avec cette adresse. Connectez-vous, ou demandez un lien de connexion par mail.');
+  const admin = ADMIN_EMAILS.includes(email);
+  if (admin && ADMIN_SETUP_CODE.length < 12) fail(403, 'Cette adresse est celle d’un administrateur : connectez-vous avec le lien reçu par mail.');
+  if (admin && !adminCodeOk(req.body.admin_code)) fail(403, req.body.admin_code ? 'Code administrateur incorrect.' : 'Cette adresse est celle d’un administrateur : saisissez le code administrateur.', 'admin_code');
+  const u = await one('INSERT INTO users (email, name, is_admin, ics_token, password_hash, email_verified) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (email) DO NOTHING RETURNING id',
+    [email, name, admin, token(18), await hashPassword(pw), admin]);
+  if (!u) fail(409, 'Un compte existe déjà avec cette adresse. Connectez-vous.');
+  await createSession(res, u.id);
+  res.json({ ok: true });
+}));
+
+app.post('/api/auth/login', wrap(async (req, res) => {
+  if (!PASSWORD_LOGIN) fail(403, 'La connexion par mot de passe est désactivée : demandez un lien de connexion par mail.');
+  const email = normEmail(req.body.email);
+  const pw = typeof req.body.password === 'string' ? req.body.password.slice(0, 200) : '';
+  if (limited(`li:${req.ip}`, 30, 15 * 60e3) || limited(`lm:${email}`, 10, 15 * 60e3)) fail(429, 'Trop d’essais. Réessayez dans un quart d’heure, ou demandez un lien de connexion par mail.');
+  const u = isEmail(email) ? await one('SELECT id, password_hash FROM users WHERE email = $1', [email]) : null;
+  const ok = await checkPassword(pw, u?.password_hash || DUMMY_HASH);
+  // Même réponse pour une adresse inconnue, un compte sans mot de passe ou un mauvais mot de passe
+  if (!u?.password_hash || !ok) fail(401, 'Adresse ou mot de passe incorrect.');
+  await createSession(res, u.id);
+  res.json({ redirect: '/' });
 }));
 
 const findInvite = (t) => one(`SELECT i.*, a.status, a.name AS asso_name, a.color AS asso_color FROM invitations i JOIN associations a ON a.id = i.association_id
@@ -263,8 +357,9 @@ app.post('/api/auth/invite', wrap(async (req, res) => {
   if (!u) u = await ensureUser(inv.email, { association_id: inv.association_id });
   else await q('UPDATE users SET association_id = $1 WHERE id = $2', [inv.association_id, u.id]);
   await q('UPDATE invitations SET accepted_at = now() WHERE id = $1', [inv.id]);
+  const cleared = await confirmEmail(u, req);
   await createSession(res, u.id);
-  res.json({ redirect: u.name ? '/' : '/compte?bienvenue=1' });
+  res.json({ redirect: afterLogin(u, cleared) });
 }));
 
 app.post('/api/auth/logout', wrap(async (req, res) => {
@@ -282,6 +377,16 @@ app.put('/api/me', wrap(async (req, res) => {
   const name = str(req.body.name, 80);
   if (!name) fail(400, 'Indiquez votre nom.');
   await q('UPDATE users SET name = $1 WHERE id = $2', [name, u.id]);
+  res.json({ ok: true });
+}));
+
+// Choisir ou changer son mot de passe. Les autres appareils connectés sont déconnectés.
+app.put('/api/me/password', wrap(async (req, res) => {
+  const u = requireUser(req);
+  const pw = passwordInput(req.body.password, u.email);
+  if (limited(`pw:${u.id}`, 10, 60 * 60e3)) fail(429, 'Trop de changements d’un coup. Réessayez plus tard.');
+  await q('UPDATE users SET password_hash = $1 WHERE id = $2', [await hashPassword(pw), u.id]);
+  await q('DELETE FROM sessions WHERE user_id = $1 AND id <> $2', [u.id, sha(req.cookies[COOKIE])]);
   res.json({ ok: true });
 }));
 
@@ -363,9 +468,13 @@ app.post('/api/register', wrap(async (req, res) => {
   if (!personName) fail(400, 'Indiquez votre nom.');
   if (!isEmail(contact)) fail(400, 'Adresse de contact invalide.');
   const color = PALETTE_HEX.has(a.color) ? a.color : PALETTE[0].hex;
+  // Sans être connecté, on peut choisir un mot de passe tout de suite : pas besoin d'attendre un mail
+  const pw = !req.user && p.password ? passwordInput(p.password, email) : null;
 
   const existing = await one('SELECT * FROM users WHERE email = $1', [email]);
   if (existing && existing.association_id) fail(409, 'Cette adresse est déjà rattachée à une association.');
+  if (pw && existing) fail(409, 'Un compte existe déjà avec cette adresse : connectez-vous d’abord, puis inscrivez votre association.');
+  if (pw && ADMIN_EMAILS.includes(email)) fail(403, 'Cette adresse est celle d’un administrateur : créez d’abord votre compte, puis inscrivez votre association.');
   const dup = await one('SELECT id FROM associations WHERE lower(name) = lower($1)', [name]);
   if (dup) fail(409, 'Une association porte déjà ce nom. Demandez à ses membres de vous inviter.');
 
@@ -379,6 +488,7 @@ app.post('/api/register', wrap(async (req, res) => {
   let u = existing;
   if (u) u = await one('UPDATE users SET association_id = $1, name = COALESCE(NULLIF(name, \'\'), $2) WHERE id = $3 RETURNING *', [asso.id, personName, u.id]);
   else u = await ensureUser(email, { name: personName, association_id: asso.id });
+  if (pw) u = await one('UPDATE users SET password_hash = $1 WHERE id = $2 RETURNING *', [await hashPassword(pw), u.id]);
   await logHistory({ query: q }, { entity: 'association', entityId: asso.id, action: 'inscription', user: { ...u, asso_name: name }, after: asso });
 
   const base = baseUrl(req);
@@ -386,12 +496,13 @@ app.post('/api/register', wrap(async (req, res) => {
   const adminList = new Set([...admins.map((x) => x.email), ...ADMIN_EMAILS]);
   for (const to of adminList) await adminNewAssoMail(to, name, `${base}/admin`);
 
-  if (!req.user) {
+  if (pw) await createSession(res, u.id); // connecté tout de suite
+  else if (!req.user) {
     const t = token();
     await q(`INSERT INTO login_tokens (token_hash, email, expires_at) VALUES ($1, $2, now() + interval '30 minutes')`, [sha(t), email]);
     await loginMail(email, `${base}/auth/verify?token=${t}`);
   }
-  res.json({ ok: true, slug });
+  res.json({ ok: true, slug, logged_in: !!pw });
 }));
 
 // ---------- associations ----------
@@ -1016,7 +1127,7 @@ app.use((err, req, res, _next) => {
   const status = err.status || (err.type === 'entity.too.large' ? 413 : 500);
   if (status >= 500) console.error(err);
   const message = status === 413 ? 'Fichier trop lourd.' : status >= 500 ? 'Erreur du serveur. Réessayez.' : err.message;
-  res.status(status).json({ error: message });
+  res.status(status).json({ error: message, ...(err.code && status < 500 ? { code: err.code } : {}) });
 });
 
 // Nettoyage périodique des jetons expirés
