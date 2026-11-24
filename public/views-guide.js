@@ -50,7 +50,7 @@ export function guideView() {
       <h2>Votre entité est déjà sur Lanterne</h2>
       <p><b>Ne la réinscrivez pas.</b> Demandez à un de ses membres de vous inviter : il le fait depuis la page de l’entité, avec votre adresse mail.
         Vous recevez un lien, vous rejoignez l’entité, et vous pouvez publier.</p>
-      <p class="small muted">Les mails n’arrivent pas ? Créez un compte avec la même adresse, puis demandez à un administrateur de vous rattacher.</p>
+      <p class="small muted">Le mail n’arrive pas ? Le membre qui vous invite voit aussi le lien d’invitation : il peut vous l’envoyer par SMS ou par message.</p>
       <div class="actions"><a class="btn" href="/entites">${icon('users')}Trouver mon entité</a>${u ? '' : html`<a class="btn ghost" href="/creer-un-compte">Créer un compte</a>`}</div>
     </section>
 
