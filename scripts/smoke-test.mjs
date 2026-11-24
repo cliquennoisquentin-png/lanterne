@@ -221,4 +221,29 @@ for (const p of ['/', '/styles.css', '/app.js', '/sw.js', '/manifest.webmanifest
 }
 ok('pages, styles, polices, carte et icônes servis');
 
+// État de santé (interrogé par Railway avant de basculer sur une nouvelle version)
+const health = await fetch(`${BASE}/health`);
+assert.equal(health.status, 200);
+assert.equal((await health.json()).ok, true);
+assert.equal(health.headers.get('cache-control'), 'no-store');
+ok('adresse de santé : le serveur et la base répondent');
+
+// Plafond d'appels par minute — seulement quand « npm test » l'a abaissé (variable RATE), en dernier
+// car l'adresse de test reste ensuite bloquée jusqu'à la fin de la minute.
+if (process.env.RATE) {
+  const max = Number(process.env.RATE);
+  let blocked = null;
+  for (let i = 0; i <= max && !blocked; i++) {
+    const res = await fetch(`${BASE}/api/version`);
+    if (res.status === 429) blocked = res; else await res.arrayBuffer();
+  }
+  assert.ok(blocked, `aucun refus après ${max} appels`);
+  assert.ok(Number(blocked.headers.get('retry-after')) >= 1);
+  assert.match((await blocked.json()).error, /Trop de requêtes/);
+  assert.equal((await fetch(`${BASE}/ics/public.ics`)).status, 429);
+  assert.equal((await fetch(`${BASE}/health`)).status, 200);
+  assert.equal((await fetch(`${BASE}/liste`)).status, 200);
+  ok('plafond d’appels par minute : l’API et les agendas refusent poliment, les pages restent servies');
+}
+
 console.log(`\n${passed} vérifications réussies.`);

@@ -669,3 +669,29 @@ dialog.modal.closing::backdrop { animation: backout .19s ease both; }
 .ask-list .ev-badges { display: none; }
 .ask-question { margin: 4px 0 0; font-size: 1.08rem; font-weight: 500; color: var(--text); }
 .nowrap { white-space: nowrap; }
+
+/* Formulaire : ce qui est déjà posé le jour choisi */
+.day-busy p { margin: 0; }
+.day-busy ul { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 7px; }
+.day-busy li { display: flex; align-items: baseline; gap: 8px; font-size: .9rem; color: var(--text-2); min-width: 0; }
+.day-busy li > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+.day-busy li .dot { flex: none; align-self: center; }
+.day-busy li .mono { flex: none; font-size: .8rem; color: var(--text-3); }
+.day-busy li.same { color: var(--text); }
+.day-busy li.same .mono { color: var(--danger); }
+.day-free { display: flex; align-items: center; gap: 8px; margin: 0; font-size: .86rem; color: var(--text-3); }
+.day-free .lantern { width: 12px; height: 16px; flex: none; }
+[data-day-busy]:empty { display: none; }
+
+/* Liste : recherche et export */
+.list-tools { margin-bottom: 10px; }
+.search-field { position: relative; flex: 1 1 240px; min-width: 0; display: block; }
+.search-field svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); width: 17px; height: 17px; color: var(--text-3); pointer-events: none; }
+.search-field .input { padding-left: 38px; min-height: 40px; }
+.list-count { margin: 0 0 12px; }
+.list-count:empty { display: none; }
+@media (max-width: 560px) {
+  .list-tools .segmented { flex: 1 1 100%; }
+  .list-tools .segmented a { flex: 1; justify-content: center; }
+  .list-tools .segmented a span { display: inline; }
+}

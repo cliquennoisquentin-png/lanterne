@@ -1,6 +1,6 @@
 // Lanterne — formulaire de saisie (fiche rapide), lieux partagés, autocomplétion d'adresse
-import { html, raw, esc, $, $$, icon, api, toast, parisDate, dayKey, timeInput, addDays, TYPES, VIS, STATUS, readImage, debounce } from './lib.js';
-import { state, isMember, navigate, params, loadVenues, loadAssos, invalidate, emptyState } from './core.js';
+import { html, raw, esc, $, $$, icon, lantern, api, toast, parisDate, dayKey, timeInput, timeHM, addDays, eventDays, keyLabel, TYPES, VIS, STATUS, readImage, debounce, fold } from './lib.js';
+import { state, isMember, navigate, params, loadVenues, loadAssos, loadEvents, invalidate, emptyState } from './core.js';
 
 const main = () => document.getElementById('main');
 
@@ -130,6 +130,7 @@ export async function eventForm(id = null) {
           <label class="field"><span>Fin</span><input class="input mono" type="time" name="end" value="${v.end}"></label>
         </div>
       </div>
+      <div data-day-busy aria-live="polite"></div>
       <div class="field combo"><span class="field-label">Lieu <span class="req" style="color:var(--accent-text)">*</span></span>
         <input class="input" name="venue_q" autocomplete="off" value="${venue ? `${venue.name}${venue.city ? ` · ${venue.city}` : ''}` : ''}" placeholder="Chercher une salle, un bar, une MJC…" role="combobox" aria-expanded="false" aria-autocomplete="list">
         <div class="combo-list" data-venue-list hidden role="listbox"></div>
@@ -191,11 +192,42 @@ export async function eventForm(id = null) {
   form.addEventListener('change', (ev) => { if (['type', 'visibility', 'status'].includes(ev.target.name)) syncVis(); });
   syncVis();
 
+  // Ce qui est déjà posé ce jour-là : on le voit avant de valider (c'est tout l'intérêt de Lanterne)
+  const busyBox = $('[data-day-busy]');
+  let busyList = null; let busySeq = 0;
+  const renderBusy = () => {
+    if (!busyBox.isConnected) return;
+    const date = form.querySelector('[name=date]').value;
+    if (!busyList) { busyBox.innerHTML = ''; return; }
+    if (!busyList.length) { busyBox.innerHTML = String(html`<p class="day-free">${lantern('var(--accent)')}La place est libre le ${keyLabel(date)}.</p>`); return; }
+    const same = busyList.filter((e) => venueId && e.venue_id === venueId);
+    busyBox.innerHTML = String(html`<div class="notice ${same.length ? 'warn' : 'info'} day-busy">
+      <p><b>Déjà ${busyList.length} date${busyList.length > 1 ? 's' : ''} le ${keyLabel(date)}</b>${same.length ? html` — dont ${same.length} au même lieu` : ''}</p>
+      <ul>${busyList.slice(0, 6).map((e) => html`<li class="${venueId && e.venue_id === venueId ? 'same' : ''}"><span class="dot" style="--c:${e.asso_color}"></span><span class="mono">${timeHM(e.starts_at)}</span>
+        <span><a href="/evenement/${e.id}" target="_blank" rel="noopener">${e.title}</a> · ${e.asso_name}${e.venue_name ? ` · ${e.venue_name}` : ''}${e.status === 'option' ? ' · en option' : ''}</span></li>`)}</ul>
+      ${busyList.length > 6 ? html`<p class="small faint">et ${busyList.length - 6} autre${busyList.length > 7 ? 's' : ''}…</p>` : ''}
+    </div>`);
+  };
+  const loadBusy = async () => {
+    const date = form.querySelector('[name=date]').value;
+    const seq = ++busySeq;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { busyList = null; renderBusy(); return; }
+    try {
+      const events = await loadEvents(parisDate(date), parisDate(addDays(date, 1)));
+      if (seq !== busySeq) return; // la date a changé entre-temps
+      busyList = events.filter((e) => e.id !== id && e.status !== 'annule' && eventDays(e).includes(date))
+        .sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
+    } catch { if (seq === busySeq) busyList = null; } // hors ligne : pas d'avertissement, la saisie reste possible
+    renderBusy();
+  };
+  form.querySelector('[name=date]').addEventListener('change', loadBusy);
+  loadBusy();
+
   // Lieux : autocomplétion sur la liste partagée
   const vq = form.querySelector('[name=venue_q]');
   const vl = $('[data-venue-list]');
   let hl = -1; let items = [];
-  const norm = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const norm = fold;
   const renderVenues = () => {
     const q = norm(vq.value.trim());
     items = state.venues.filter((x) => !x.archived && (!q || norm(`${x.name} ${x.city} ${x.district} ${x.address}`).includes(q))).slice(0, 8);
@@ -204,10 +236,10 @@ export async function eventForm(id = null) {
     vl.hidden = false; vq.setAttribute('aria-expanded', 'true');
   };
   const closeVenues = () => { vl.hidden = true; vq.setAttribute('aria-expanded', 'false'); hl = -1; };
-  const pickVenue = (x) => { venueId = x.id; vq.value = `${x.name}${x.city ? ` · ${x.city}` : ''}`; closeVenues(); };
+  const pickVenue = (x) => { venueId = x.id; vq.value = `${x.name}${x.city ? ` · ${x.city}` : ''}`; closeVenues(); renderBusy(); };
   const openNew = () => { closeVenues(); venueCreator($('[data-venue-new]'), vq.value.trim(), (venue) => pickVenue(venue)); };
   vq.addEventListener('focus', renderVenues);
-  vq.addEventListener('input', () => { venueId = null; hl = -1; renderVenues(); });
+  vq.addEventListener('input', () => { venueId = null; hl = -1; renderVenues(); renderBusy(); });
   vq.addEventListener('keydown', (ev) => {
     if (vl.hidden) return;
     if (ev.key === 'ArrowDown') { hl = Math.min(items.length - 1, hl + 1); renderVenues(); ev.preventDefault(); }

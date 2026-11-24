@@ -177,6 +177,8 @@ const P = {
   up: '<path d="M12 19V5M6 11l6-6 6 6"/>',
   down: '<path d="M12 5v14M6 13l6 6 6-6"/>',
   comment: '<path d="M4.5 5.5h15v10h-9l-4.5 3.5v-3.5h-1.5v-10Z"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/>',
+  download: '<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5"/><path d="M5 19.5h14"/>',
 };
 export const icon = (name, cls = '') => raw(`<svg class="${cls}" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[name] || ''}</svg>`);
 export const logo = (cls = 'logo-mark') => raw(`<svg class="${cls}" viewBox="0 0 64 80" aria-hidden="true"><use href="#lanterne-logo"/></svg>`);
@@ -232,3 +234,44 @@ export const storage = {
   get(k, d = null) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* navigation privée */ } },
 };
+
+// ---------- recherche : sans tenir compte des accents ni des majuscules ----------
+export const fold = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const haystack = (e) => fold([e.title, e.asso_name, ...(e.orgs || []).map((o) => o.name), e.venue_name, e.venue_city, e.venue_district,
+  e.category_name, e.description].filter(Boolean).join(' '));
+// Tous les mots tapés doivent se retrouver quelque part dans la fiche (titre, association, lieu, catégorie, description)
+export function searchEvents(events, query) {
+  const words = fold(query).split(/\s+/).filter(Boolean);
+  if (!words.length) return events;
+  return events.filter((e) => { const h = haystack(e); return words.every((w) => h.includes(w)); });
+}
+
+// ---------- export : un fichier CSV qui s'ouvre directement dans Excel ou LibreOffice ----------
+const csvCell = (v) => {
+  let s = String(v ?? '').replace(/\r?\n/g, ' ').trim();
+  if (/^[=+\-@\t]/.test(s)) s = `'${s}`; // un tableur ne doit jamais prendre un texte pour une formule
+  return /[";]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+export function eventsCsv(events, origin = '') {
+  const day = (d) => (d ? fmt(d, { day: '2-digit', month: '2-digit', year: 'numeric' }) : '');
+  const hm = (d) => (d ? timeInput(d) : '');
+  const names = (list) => (list || []).map((o) => o.name).join(', ');
+  const head = ['Date', 'Début', 'Date de fin', 'Fin', 'Titre', 'Statut', 'Type', 'Visibilité', 'Catégorie', 'Association', 'Co-organisation',
+    'Lieu', 'Adresse', 'Commune', 'Quartier', 'Tarif', 'Lien', 'On y va', 'Intéressées', 'Fiche Lanterne'];
+  const rows = events.map((e) => [
+    day(e.starts_at), hm(e.starts_at), day(e.ends_at), hm(e.ends_at), e.title, STATUS[e.status]?.label || e.status, TYPES[e.type]?.short || e.type,
+    VIS[e.visibility]?.label || e.visibility, e.category_name, e.asso_name, names((e.orgs || []).filter((o) => o.id !== e.association_id)),
+    e.venue_name, e.venue_address, e.venue_city, e.venue_district, e.price, e.link,
+    names((e.attendances || []).filter((a) => a.kind === 'going')), names((e.attendances || []).filter((a) => a.kind === 'interested')),
+    `${origin}/evenement/${e.id}`,
+  ]);
+  // BOM en tête : Excel reconnaît ainsi les accents ; point-virgule : le séparateur des tableurs en français
+  return `\uFEFF${[head, ...rows].map((r) => r.map(csvCell).join(';')).join('\r\n')}\r\n`;
+}
+export function downloadText(filename, text, type = 'text/csv;charset=utf-8') {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.hidden = true;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}

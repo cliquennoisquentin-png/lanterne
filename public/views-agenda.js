@@ -2,6 +2,7 @@
 import {
   html, raw, esc, $, $$, icon, lantern, statusBadge, api, toast, timeHM, dayKey, todayKey, addDays, addMonths, weekday,
   monthLabel, keyLabel, eventDays, parisDate, longDate, TYPES, VIS, STATUS, assoLogo, assoChip, fmt, timeInput,
+  searchEvents, eventsCsv, downloadText, debounce,
 } from './lib.js';
 import {
   state, isMember, isAdmin, navigate, params, loadEvents, applyFilters, filtersActive, eventCard, emptyState,
@@ -18,6 +19,7 @@ function viewSwitch(current) {
     <a href="/carte" ${current === 'map' ? raw('aria-current="page"') : ''}>${icon('map')}<span>Carte</span></a>
   </nav>`;
 }
+const searchBtn = () => html`<a class="btn" href="/liste?q=" aria-label="Chercher une date" title="Chercher une date">${icon('search')}</a>`;
 const filterBtn = () => html`<button class="btn ${filtersActive() ? 'on' : ''}" data-filters aria-label="Filtres">${icon('filter')}<span class="hide-sm">Filtres</span>${filtersActive() ? html`<span class="pill-count">${filtersActive()}</span>` : ''}</button>`;
 function bindCommon(root) {
   $('[data-filters]', root)?.addEventListener('click', () => window.lanterne.openFilters());
@@ -54,7 +56,7 @@ export async function monthView() {
       <a class="btn small ghost" href="/?mois=${addMonths(month, -12)}" title="Voir le même mois l’an dernier" aria-label="Le même mois l’an dernier">${icon('history')}<span class="hide-sm">L’an dernier</span></a>
       <span class="spacer"></span>
       ${viewSwitch('month')}
-      ${filterBtn()}
+      ${searchBtn()}${filterBtn()}
     </div>
     <div class="cal-wrap"><div><div class="cal" role="grid" aria-label="Calendrier ${monthLabel(month)}"><div class="spinner" style="grid-column:1/-1"></div></div>
       <div class="legend">
@@ -155,41 +157,72 @@ export async function monthView() {
 // =====================================================================
 export async function listView() {
   const past = params().get('archives') === '1';
+  const asked = params().has('q'); // on arrive par le bouton « Chercher » : le champ prend le focus
+  let query = (params().get('q') || '').trim().slice(0, 100);
   main().innerHTML = String(html`${pendingBanner()}
     <div class="page-head">
       <h1>${past ? 'Archives' : 'Prochaines dates'}</h1><span class="spacer"></span>
       ${viewSwitch('list')}${filterBtn()}
     </div>
-    <div class="row" style="margin-bottom:14px">
+    <div class="row list-tools">
       <div class="segmented" role="group" aria-label="Période">
-        <a href="/liste" ${!past ? raw('aria-current="page"') : ''}>À venir</a>
-        <a href="/liste?archives=1" ${past ? raw('aria-current="page"') : ''}>${icon('archive')}Archives</a>
+        <a href="/liste" data-period="" ${!past ? raw('aria-current="page"') : ''}>À venir</a>
+        <a href="/liste?archives=1" data-period="1" ${past ? raw('aria-current="page"') : ''}>${icon('archive')}Archives</a>
       </div>
-      <span class="spacer" style="flex:1"></span>
+      <label class="search-field">${icon('search')}<input class="input" type="search" data-search value="${query}" maxlength="100" enterkeyhint="search"
+        placeholder="Chercher une date, une association, un lieu…" aria-label="Chercher dans les dates"></label>
+      <button class="btn small ghost" data-export title="Télécharger ces dates dans un fichier pour Excel ou LibreOffice">${icon('download')}Exporter</button>
       <button class="btn small ghost" data-subscribe>${icon('rss')}S’abonner</button>
     </div>
+    <p class="small faint list-count" data-count aria-live="polite"></p>
     <div class="narrow" data-list><div class="spinner"></div></div>`);
   bindCommon(main());
+  const input = $('[data-search]');
+  if (asked) input.focus();
   const now = new Date();
-  let events;
+  let all;
   try {
-    events = past
+    all = past
       ? await loadEvents(new Date(now.getTime() - 3 * 365 * 864e5), now, 'order=desc&limit=1500')
       : await loadEvents(now, new Date(now.getTime() + 400 * 864e5));
   } catch (e) { $('[data-list]').innerHTML = String(emptyState(e.message)); return; }
-  events = applyFilters(events);
-  if (past) events = events.filter((e) => new Date(e.starts_at) < now);
-  const groups = new Map();
-  for (const e of events) { const k = dayKey(e.starts_at); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(e); }
+  all = applyFilters(all);
+  if (past) all = all.filter((e) => new Date(e.starts_at) < now);
   const today = todayKey();
   const lastYear = `/?mois=${addMonths(today.slice(0, 7), -12)}`;
-  $('[data-list]').innerHTML = String(groups.size ? html`
-    ${past ? html`<p class="muted small">Les dates passées restent consultables. <a href="${lastYear}">Voir l’an dernier à la même période</a>.</p>` : ''}
-    ${[...groups].map(([k, list]) => html`<section class="list-day">
-      <div class="list-date ${k === today ? 'today' : ''}"><div class="w">${keyLabel(k, { weekday: 'short' })}</div><div class="d">${Number(k.slice(8))}</div><div class="m">${keyLabel(k, { month: 'short' })}${k.slice(0, 4) !== today.slice(0, 4) ? ` ${k.slice(2, 4)}` : ''}</div></div>
-      <div class="list-events">${list.map((e) => eventCard(e))}</div>
-    </section>`)}` : emptyState(past ? 'Pas encore d’archives.' : (filtersActive() ? 'Aucune date avec ces filtres.' : 'Aucune date à venir pour l’instant.'),
-    isMember() && !past ? html`<a class="btn primary" href="/nouveau">${icon('plus')}Poser une date</a>` : ''));
+  let shown = all;
+
+  const draw = () => {
+    const box = $('[data-list]');
+    if (!box || !input.isConnected) return; // on a changé de page entre-temps
+    shown = searchEvents(all, query);
+    // La recherche suit quand on passe de « À venir » aux archives, et reste dans l'adresse (lien partageable)
+    const qs = (archives) => { const u = new URLSearchParams(); if (archives) u.set('archives', '1'); if (query) u.set('q', query); const t = u.toString(); return t ? `?${t}` : ''; };
+    $$('[data-period]').forEach((a) => { a.href = `/liste${qs(a.dataset.period === '1')}`; });
+    history.replaceState({}, '', `/liste${qs(past)}`);
+    $('[data-count]').textContent = query ? `${shown.length} date${shown.length > 1 ? 's' : ''} pour « ${query} »${filtersActive() ? ' (avec les filtres actuels)' : ''}` : '';
+    $('[data-export]').disabled = !shown.length;
+    const groups = new Map();
+    for (const e of shown) { const k = dayKey(e.starts_at); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(e); }
+    const none = query
+      ? emptyState(`Aucune date ${past ? 'passée' : 'à venir'} ne correspond à « ${query} ».`, html`<a class="btn" href="/liste${qs(!past)}">${past ? 'Chercher dans les dates à venir' : 'Chercher dans les archives'}</a>`)
+      : emptyState(past ? 'Pas encore d’archives.' : (filtersActive() ? 'Aucune date avec ces filtres.' : 'Aucune date à venir pour l’instant.'),
+        isMember() && !past ? html`<a class="btn primary" href="/nouveau">${icon('plus')}Poser une date</a>` : '');
+    box.innerHTML = String(groups.size ? html`
+      ${past && !query ? html`<p class="muted small">Les dates passées restent consultables. <a href="${lastYear}">Voir l’an dernier à la même période</a>.</p>` : ''}
+      ${[...groups].map(([k, list]) => html`<section class="list-day">
+        <div class="list-date ${k === today ? 'today' : ''}"><div class="w">${keyLabel(k, { weekday: 'short' })}</div><div class="d">${Number(k.slice(8))}</div><div class="m">${keyLabel(k, { month: 'short' })}${k.slice(0, 4) !== today.slice(0, 4) ? ` ${k.slice(2, 4)}` : ''}</div></div>
+        <div class="list-events">${list.map((e) => eventCard(e))}</div>
+      </section>`)}` : none);
+  };
+  draw();
+  input.addEventListener('input', debounce(() => { query = input.value.trim(); draw(); }, 120));
+  // Export : exactement ce qui est affiché (période, filtres et recherche compris)
+  $('[data-export]').addEventListener('click', () => {
+    const rows = past ? shown : [...shown].sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
+    downloadText(`lanterne-${past ? 'archives' : 'dates-a-venir'}-${today}.csv`, eventsCsv(rows, location.origin));
+    toast(`${rows.length} date${rows.length > 1 ? 's' : ''} exportée${rows.length > 1 ? 's' : ''}.`);
+  });
 }
 
 // =====================================================================

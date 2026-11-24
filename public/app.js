@@ -206,6 +206,14 @@ document.addEventListener('click', (ev) => {
 });
 window.addEventListener('popstate', render);
 
+// Filet de sécurité : une action qui échoue sans message prévu affiche quand même une notification
+window.addEventListener('unhandledrejection', (ev) => {
+  const err = ev.reason;
+  if (!err || err.name === 'AbortError') return;
+  console.error(err);
+  toast(err.status ? err.message : 'Une erreur est survenue. Réessayez dans un instant.', 'error');
+});
+
 // ---------- démarrage ----------
 (async function boot() {
   let shown;

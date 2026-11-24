@@ -33,6 +33,17 @@ Version 1, conforme au cahier des charges du 24 novembre 2026.
 | Carte à fond sombre | OpenFreeMap (gratuit, sans clé), MapLibre |
 | Données minimales, mentions légales, suppression du compte | `/mentions-legales`, Mon compte |
 
+Ajouts depuis la version 1 :
+
+| Nouveauté | Où c'est |
+|---|---|
+| Recherche dans les dates (titre, association, lieu, catégorie, description), sans accents ni majuscules | Liste, bouton loupe du calendrier, `searchEvents()` dans `public/lib.js` |
+| Export des dates affichées vers Excel ou LibreOffice (CSV) | Liste → « Exporter », `eventsCsv()` dans `public/lib.js` |
+| En posant une date, on voit ce qui est déjà prévu ce jour-là, et si c'est au même lieu | formulaire, `public/views-form.js` |
+| Adresse de santé pour des mises à jour sans coupure | `/health`, `railway.json` |
+| Plafond général d'appels par minute | `throttle()` dans `server/index.js` |
+| Une action qui échoue affiche toujours un message | `public/app.js` |
+
 La version 2 (suivre des associations, bourse matériel et bénévoles, affiche du mois, bilan annuel, modération, nom de domaine) n'est pas incluse, comme prévu.
 
 ## Technique
@@ -42,16 +53,19 @@ La version 2 (suivre des associations, bourse matériel et bénévoles, affiche 
 
 ```bash
 npm install
-ADMIN_EMAILS=vous@exemple.fr npm run dev
+cp .env.example .env   # puis mettez votre adresse dans ADMIN_EMAILS
+npm run dev
 ```
 
 Sans service d'envoi configuré, les mails (liens de connexion, invitations) s'affichent dans le terminal.
 
-Test de bout en bout (serveur local lancé sans service d'envoi, journal redirigé dans un fichier) :
+Tests (syntaxe, outils de l'interface, puis scénario de bout en bout sur un serveur jetable : base vide, aucun mail envoyé) :
 
 ```bash
-BASE=http://localhost:3000 LOG=chemin/du/journal node scripts/smoke-test.mjs
+npm test
 ```
+
+Les règles du projet et les décisions prises sont dans `CLAUDE.md`.
 
 ## Variables d'environnement (Railway)
 
@@ -65,6 +79,10 @@ BASE=http://localhost:3000 LOG=chemin/du/journal node scripts/smoke-test.mjs
 | `MAIL_FROM` | Expéditeur, ex. `Lanterne <adresse@exemple.fr>` (doit être vérifié chez le service d'envoi) |
 | `CONTACT_EMAIL` | Adresse affichée dans les mentions légales |
 | `PUBLIC_URL` | Facultatif : adresse publique si elle diffère de celle de Railway |
+| `BACKUP_EMAILS` | Facultatif : destinataires de la sauvegarde de nuit (par défaut `ADMIN_EMAILS`) |
+| `API_RATE_LIMIT` | Facultatif : plafond d'appels par minute et par adresse (600 par défaut) |
+
+La liste complète, commentée, est dans `.env.example`. Railway interroge `/health` (réglé dans `railway.json`) avant de basculer sur une nouvelle version.
 
 ## Sauvegardes
 

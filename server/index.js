@@ -1,4 +1,5 @@
 // Lanterne — serveur
+import './env.js'; // en premier : les autres fichiers lisent la configuration dès leur chargement
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import compression from 'compression';
@@ -63,6 +64,25 @@ setInterval(() => {
   for (const [k, arr] of hits) if (!arr.length || now - arr[arr.length - 1] > 2 * 3600e3) hits.delete(k);
 }, 30 * 60e3).unref();
 
+// Garde-fou général : un plafond d'appels par minute et par adresse, pour qu'un robot ou une boucle
+// folle ne mette pas la base à genoux. Très large : une personne normale n'en approche jamais.
+const API_RATE_LIMIT = Math.max(60, Number(process.env.API_RATE_LIMIT) || 600);
+const minuteWindows = new Map();
+function throttle(req, res, next) {
+  const now = Date.now();
+  let w = minuteWindows.get(req.ip);
+  if (!w || now - w.start >= 60e3) { w = { start: now, n: 0 }; minuteWindows.set(req.ip, w); }
+  if (++w.n > API_RATE_LIMIT) {
+    res.setHeader('Retry-After', String(Math.ceil((w.start + 60e3 - now) / 1000)));
+    return res.status(429).json({ error: 'Trop de requêtes d’un coup. Réessayez dans une minute.' });
+  }
+  next();
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, w] of minuteWindows) if (now - w.start >= 60e3) minuteWindows.delete(ip);
+}, 5 * 60e3).unref();
+
 // Valeurs de requête sûres
 const dateParam = (v) => { const d = new Date(String(v)); return Number.isNaN(d.getTime()) ? null : d; };
 const intParam = (v, min, max, dflt) => { const n = Math.trunc(Number(v)); return Number.isFinite(n) && n >= min ? Math.min(n, max) : dflt; };
@@ -106,6 +126,8 @@ app.use((req, res, next) => {
 });
 // Numéros dans les adresses (/api/events/12…) : on refuse proprement ce qui n'est pas un nombre
 app.param('id', (req, res, next, id) => (/^\d{1,10}$/.test(id) ? next() : res.status(404).json({ error: 'Introuvable.' })));
+
+app.use(['/api', '/ics'], throttle);
 
 // Protection CSRF : toute écriture sur l'API doit porter l'en-tête maison
 app.use('/api', (req, res, next) => {
@@ -169,8 +191,21 @@ function publicUser(u) {
   };
 }
 
-// ---------- version ----------
+// ---------- version et état de santé ----------
 app.get('/api/version', (req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json({ version: VERSION }); });
+
+// Railway interroge cette adresse avant de basculer sur une nouvelle version : si la base
+// ne répond pas, l'ancienne version reste en ligne au lieu d'afficher une page d'erreur.
+app.get('/health', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    await q('SELECT 1');
+    res.json({ ok: true, version: VERSION, uptime: Math.round(process.uptime()) });
+  } catch (err) {
+    console.error('[santé] base injoignable :', err.code || err.message);
+    res.status(503).json({ ok: false });
+  }
+});
 
 // ---------- configuration ----------
 app.get('/api/config', wrap(async (req, res) => {
@@ -989,6 +1024,9 @@ setInterval(() => {
   q(`DELETE FROM login_tokens WHERE expires_at < now() - interval '1 day'`).catch(() => {});
   q(`DELETE FROM sessions WHERE expires_at < now()`).catch(() => {});
 }, 6 * 3600e3).unref();
+
+// Une promesse oubliée ne doit pas faire tomber le serveur : on la note dans le journal
+process.on('unhandledRejection', (err) => console.error('[lanterne] erreur non gérée :', err));
 
 await initDb();
 const server = app.listen(PORT, () => {
