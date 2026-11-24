@@ -48,7 +48,15 @@ export async function initDb() {
     };
     console.log('[db] PGlite local :', dir);
   }
-  await impl.exec(fs.readFileSync(path.join(here, 'schema.sql'), 'utf8'));
+  // Au démarrage sur Railway, le réseau privé et la base peuvent mettre quelques secondes à répondre
+  const schema = fs.readFileSync(path.join(here, 'schema.sql'), 'utf8');
+  for (let attempt = 1; ; attempt++) {
+    try { await impl.exec(schema); break; } catch (err) {
+      if (attempt >= 30) throw err;
+      console.log(`[db] base pas encore joignable (${err.code || err.message}), nouvel essai dans 2 s…`);
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
   await seed();
 }
 
