@@ -45,6 +45,8 @@ Ajouts depuis la version 1 :
 | Une action qui échoue affiche toujours un message | `public/app.js` |
 | Créer son compte avec un mot de passe et se connecter sans mail (le lien par mail reste possible) | `/creer-un-compte`, `/connexion`, Mon compte, `/api/auth/signup` et `/api/auth/login` |
 | Choisir un mot de passe dès l'inscription de son association | `/inscription` |
+| Carte : une adresse tapée à la main est placée automatiquement (et les lieux existants au démarrage) ; les dates hors carte sont listées sous la carte | `server/geocode.js`, Administration → Lieux |
+| Événements du territoire : ceux de l'Office de tourisme de Saint-Étienne et des offices voisins (DATAtourisme), avec un bouton sous le jour choisi du calendrier | `/territoire`, `server/tourisme.js` |
 
 La version 2 (suivre des associations, bourse matériel et bénévoles, affiche du mois, bilan annuel, modération, nom de domaine) n'est pas incluse, comme prévu.
 
@@ -84,6 +86,7 @@ Les règles du projet et les décisions prises sont dans `CLAUDE.md`.
 | `BACKUP_EMAILS` | Facultatif : destinataires de la sauvegarde de nuit (par défaut `ADMIN_EMAILS`) |
 | `API_RATE_LIMIT` | Facultatif : plafond d'appels par minute et par adresse (600 par défaut) |
 | `PASSWORD_LOGIN` | Facultatif : `off` coupe la connexion par mot de passe (seul le lien par mail reste) |
+| `TOURISME` | Facultatif : `off` masque la page « Événements du territoire » |
 | `ADMIN_SETUP_CODE` | Facultatif : code secret (12 caractères au moins) pour créer par mot de passe le compte d'une adresse de `ADMIN_EMAILS` |
 
 La liste complète, commentée, est dans `.env.example`. Railway interroge `/health` (réglé dans `railway.json`) avant de basculer sur une nouvelle version.

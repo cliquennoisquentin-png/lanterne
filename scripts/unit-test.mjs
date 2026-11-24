@@ -59,4 +59,23 @@ assert.equal(line, '24/12/2026;20:30;25/12/2026;01:00;"\'=SOMME(A1) ; ""concert"
   + 'Le Fil;20 boulevard Thiers;Saint-Étienne;;Prix libre;https://exemple.fr;Fanfare;Chorale;https://lanterne.test/evenement/7');
 ok('export : accents lisibles par Excel, point-virgule, guillemets doublés, formules neutralisées, heure de Paris');
 
+// ---------- événements du territoire (lecture du fichier DATAtourisme) ----------
+const { parsePeriods, normalizeRow } = await import('../server/tourisme.js');
+assert.deepEqual(parsePeriods('2027-07-02<->2027-07-31|2027-06-26<->2027-06-26|n’importe quoi'),
+  [{ start: '2027-06-26', end: '2027-06-26' }, { start: '2027-07-02', end: '2027-07-31' }]);
+const row = {
+  __id: 9, Nom_du_POI: 'Nuit des musées', Categories_de_POI: 'https://www.datatourisme.fr/ontology/core#CulturalEvent|https://www.datatourisme.fr/ontology/core#Exhibition',
+  Latitude: '45.43', Longitude: '4.40', Adresse_postale: 'None', Code_postal_et_commune: '42000#Saint-Étienne',
+  Periodes_regroupees: '2026-01-10<->2026-01-10|2026-12-05<->2026-12-06', Contacts_du_POI: '04 77 00 00 00#info@musee.test#javascript:alert(1)#https://musee.test/',
+  Createur_de_la_donnee: 'Office de tourisme', URI_ID_du_POI: 'https://data.datatourisme.fr/13/abc-def', Description: 'None',
+};
+const ev = normalizeRow(row, '2026-11-25');
+assert.deepEqual(ev.periods, [{ start: '2026-12-05', end: '2026-12-06' }]);
+assert.equal(ev.ongoing, false); assert.deepEqual(ev.kinds, ['Exposition']);
+assert.equal(ev.address, ''); assert.equal(ev.description, '');
+assert.equal(ev.website, 'https://musee.test/'); assert.equal(ev.email, 'info@musee.test'); assert.equal(ev.phone, '04 77 00 00 00');
+assert.equal(normalizeRow({ ...row, Periodes_regroupees: '2026-01-10<->2026-01-10' }, '2026-11-25'), null);
+assert.equal(normalizeRow({ ...row, Periodes_regroupees: '2026-11-01<->2027-02-28' }, '2026-11-25').ongoing, true);
+ok('territoire : périodes passées écartées, longues périodes « en continu », liens dangereux ignorés, « None » effacé');
+
 console.log(`\n${passed} vérifications réussies.`);

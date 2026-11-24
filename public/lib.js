@@ -180,6 +180,7 @@ const P = {
   comment: '<path d="M4.5 5.5h15v10h-9l-4.5 3.5v-3.5h-1.5v-10Z"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/>',
   download: '<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5"/><path d="M5 19.5h14"/>',
+  compass: '<circle cx="12" cy="12" r="8.5"/><path d="m15.5 8.5-2 5-5 2 2-5 5-2Z"/>',
 };
 export const icon = (name, cls = '') => raw(`<svg class="${cls}" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[name] || ''}</svg>`);
 export const logo = (cls = 'logo-mark') => raw(`<svg class="${cls}" viewBox="0 0 64 80" aria-hidden="true"><use href="#lanterne-logo"/></svg>`);

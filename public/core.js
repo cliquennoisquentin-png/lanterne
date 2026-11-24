@@ -6,6 +6,7 @@ export const state = {
   palette: [],
   categories: [],
   passwordLogin: true, // connexion par mot de passe proposée (réglage PASSWORD_LOGIN du serveur)
+  tourisme: true,      // page « Événements du territoire » proposée (réglage TOURISME du serveur)
   assos: [],
   venues: null,
   filters: storage.get('lanterne-filters', { assos: [], cats: [], places: [], statuses: [], types: [] }),
@@ -52,6 +53,18 @@ export async function loadEvents(from, to, extra = '') {
   return p;
 }
 export const invalidate = () => state.cache.clear();
+
+// Événements du territoire (DATAtourisme) : chargés une fois par visite, le serveur les garde 6 heures
+let tourismPromise = null;
+export function loadTourism() {
+  if (!state.tourisme) return Promise.resolve({ events: [] });
+  if (!tourismPromise) {
+    tourismPromise = api('/api/tourisme');
+    tourismPromise.catch(() => { tourismPromise = null; });
+  }
+  return tourismPromise;
+}
+export const occursOn = (e, day) => e.periods.some((p) => p.start <= day && day <= p.end);
 const parse = (v) => (typeof v === 'string' ? JSON.parse(v) : v || []);
 export function normEvent(e) { return { ...e, orgs: parse(e.orgs), attendances: parse(e.attendances) }; }
 

@@ -297,6 +297,37 @@ r = await new Client().req('/api/register', { method: 'POST', body: { associatio
 assert.equal(r.status, 409);
 ok('inscription d’une association avec mot de passe : connecté tout de suite, en attente de validation ; compte existant protégé');
 
+// ---------- Carte et événements du territoire (« npm test » fournit de faux services d'adresse et data.gouv) ----------
+if (process.env.FAKE_SERVICES) {
+  // Une adresse tapée sans choisir de suggestion est placée sur la carte par le serveur
+  r = await alice.req('/api/venues', { method: 'POST', body: { name: 'Salle des fêtes de Montreynaud', address: '3 rue Pierre Loti 42000 Saint-Étienne' } });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.ok(r.data.venue.lat > 45 && r.data.venue.lng > 4, 'lieu placé automatiquement');
+  assert.equal(r.data.venue.citycode, '42218');
+  const lost = (await alice.req('/api/venues', { method: 'POST', body: { name: 'Hangar perdu', address: 'adresse introuvable 99' } })).data.venue;
+  assert.equal(lost.lat, null);
+  // Un administrateur corrige l'adresse à la main : la nouvelle position est retrouvée
+  r = await admin.req(`/api/venues/${lost.id}`, { method: 'PUT', body: { address: '12 rue de la Paix 42000 Saint-Étienne' } });
+  assert.ok(r.data.venue.lat > 45, 'nouvelle adresse placée');
+  r = await admin.req('/api/admin/venues/place', { method: 'POST', body: {} });
+  assert.equal(r.status, 200); assert.ok(Array.isArray(r.data.placed));
+  assert.equal((await alice.req('/api/admin/venues/place', { method: 'POST', body: {} })).status, 403);
+  // La carte lit ses images par des adresses « blob: » : la politique de sécurité doit l'autoriser
+  assert.match((await fetch(`${BASE}/carte`)).headers.get('content-security-policy'), /connect-src 'self' blob:/);
+  ok('carte : une adresse tapée à la main est placée automatiquement, et une adresse corrigée aussi');
+
+  const t = await anon.req('/api/tourisme');
+  assert.equal(t.status, 200);
+  assert.equal(t.data.source.name, 'DATAtourisme');
+  assert.deepEqual(t.data.events.map((e) => e.title).sort(), ['Fête du Livre', 'Marché de Carnot']);
+  const fete = t.data.events.find((e) => e.title === 'Fête du Livre');
+  assert.equal(fete.ongoing, false); assert.equal(fete.city, 'Saint-Étienne'); assert.equal(fete.website, 'https://fete-du-livre.test/');
+  assert.deepEqual(fete.kinds, ['Festival']);
+  assert.equal(t.data.events.find((e) => e.title === 'Marché de Carnot').ongoing, true);
+  assert.equal((await fetch(`${BASE}/territoire?jour=2026-12-01`)).status, 200);
+  ok('événements du territoire : les dates passées sont écartées, les marchés mis à part, la source citée');
+}
+
 // État de santé (interrogé par Railway avant de basculer sur une nouvelle version)
 const health = await fetch(`${BASE}/health`);
 assert.equal(health.status, 200);

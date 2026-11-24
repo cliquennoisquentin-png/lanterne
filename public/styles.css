@@ -687,6 +687,41 @@ dialog.modal.closing::backdrop { animation: backout .19s ease both; }
 .day-free .lantern { width: 12px; height: 16px; flex: none; }
 [data-day-busy]:empty { display: none; }
 
+/* Bouton « Événements du territoire » sous le jour choisi */
+.territory-btn {
+  display: flex; align-items: center; gap: 12px; margin-top: 16px; padding: 12px 14px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--text); text-decoration: none !important;
+  transition: border-color .2s, box-shadow .25s;
+}
+.territory-btn:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); box-shadow: 0 0 14px var(--accent-soft); }
+.territory-btn > svg { flex: none; width: 18px; height: 18px; color: var(--text-3); }
+.territory-btn-icon { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: var(--accent-soft); color: var(--accent-text); }
+.territory-btn-icon svg { width: 18px; height: 18px; }
+.territory-btn-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.territory-btn-text b { font-weight: 500; }
+.territory-btn-text span { font-size: .82rem; color: var(--text-3); }
+.territory-btn.has .territory-btn-text span { color: var(--accent-text); }
+
+/* Page « Événements du territoire » */
+.territory-intro { margin: -6px 0 16px; max-width: 760px; }
+.territory-day { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.territory-day > span { flex: 1; min-width: 0; }
+.territory-day svg { width: 16px; height: 16px; flex: none; }
+select.input.territory-city { width: auto; flex: 0 1 240px; min-height: 40px; max-width: 100%; }
+@media (max-width: 560px) { select.input.territory-city { flex: 1 1 100%; } }
+.territory-source { margin-top: 24px; text-align: center; }
+.territory-ongoing-title { margin: 28px 0 4px; }
+.tcard { position: relative; padding: 14px 16px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line-soft); min-width: 0; }
+.tcard-when { font-size: .8rem; color: var(--accent-text); margin-bottom: 4px; }
+.tcard-title { margin: 0 0 6px; font-family: var(--font-text); font-weight: 500; font-size: 1.02rem; letter-spacing: 0; overflow-wrap: anywhere; }
+.tcard .ev-meta { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; font-size: .86rem; color: var(--text-2); }
+.tcard .ev-meta svg { width: 14px; height: 14px; vertical-align: -2px; margin-right: 4px; }
+.tcard-desc { margin: 8px 0 0; font-size: .88rem; color: var(--text-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.tcard-foot { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.tcard-foot .spacer { flex: 1; }
+.unplaced { margin-top: 14px; }
+.unplaced .list-events { margin-top: 10px; }
+
 /* Connexion par mot de passe */
 .login-switch { display: flex; margin: 0 auto 14px; width: fit-content; }
 .field > .pw-field { display: flex; gap: 6px; align-items: center; margin: 0; font-size: 1rem; color: var(--text); }

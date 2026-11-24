@@ -8,6 +8,7 @@ import {
   state, isMember, isAdmin, navigate, params, loadEvents, applyFilters, filtersActive, eventCard, emptyState,
   openModal, confirmBox, openSubscribe, shareEvent, invalidate, normEvent, requireLoginToast,
 } from './core.js';
+import { territoryCount } from './views-territoire.js';
 
 const main = () => document.getElementById('main');
 
@@ -107,8 +108,21 @@ export async function monthView() {
     const list = (byDay.get(k) || []).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
     panel.innerHTML = String(html`<h2>${keyLabel(k)}</h2>
       ${list.length ? html`<div class="list-events">${list.map((e) => eventCard(e))}</div>` : html`<p class="muted small">Aucune date ce jour-là${filtersActive() ? ' (avec les filtres actuels)' : ''} : la place est libre.</p>`}
-      ${isMember() ? html`<button class="btn small" style="margin-top:12px" data-add="${k}">${icon('plus')}Ajouter une date ce jour</button>` : ''}`);
+      ${isMember() ? html`<button class="btn small" style="margin-top:12px" data-add="${k}">${icon('plus')}Ajouter une date ce jour</button>` : ''}
+      ${state.tourisme ? html`<a class="territory-btn" href="/territoire?jour=${k}">
+        <span class="territory-btn-icon">${icon('compass')}</span>
+        <span class="territory-btn-text"><b>Événements du territoire</b><span data-tcount>Office de tourisme et alentours</span></span>
+        ${icon('chevR')}</a>` : ''}`);
     $('[data-add]', panel)?.addEventListener('click', () => navigate(`/nouveau?date=${k}`));
+    // Combien d'événements publiés par les offices de tourisme ce jour-là (chargé sans bloquer le calendrier)
+    if (state.tourisme) {
+      territoryCount(k).then((n) => {
+        const el = $('[data-tcount]', panel);
+        if (!el || !panel.querySelector(`[href="/territoire?jour=${k}"]`)) return;
+        el.textContent = n ? `${n} événement${n > 1 ? 's' : ''} publié${n > 1 ? 's' : ''} ce jour-là` : 'Rien de publié ce jour-là';
+        panel.querySelector('.territory-btn').classList.toggle('has', n > 0);
+      }).catch(() => {});
+    }
     history.replaceState({}, '', `/?mois=${month}&jour=${k}`);
   };
   const sel = p.get('jour') && days.includes(p.get('jour')) ? p.get('jour') : (today.slice(0, 7) === month ? today : first);
@@ -257,7 +271,8 @@ export async function mapView() {
       </div>
       <span class="small faint" data-count></span>
     </div>
-    <div class="map" id="map" role="region" aria-label="Carte des événements"></div>`);
+    <div class="map" id="map" role="region" aria-label="Carte des événements"></div>
+    <div data-unplaced></div>`);
   bindCommon(main());
   let ml;
   try { ml = await loadMaplibre(); } catch { $('#map').innerHTML = String(emptyState('La carte n’a pas pu se charger.')); return; }
@@ -279,7 +294,19 @@ export async function mapView() {
   const days = range === '1m' ? 31 : range === 'all' ? 400 : 92;
   const events = applyFilters(await loadEvents(now, new Date(now.getTime() + days * 864e5)));
   const located = events.filter((e) => e.lat != null && e.lng != null);
-  $('[data-count]').textContent = `${located.length} date${located.length > 1 ? 's' : ''} sur la carte${events.length - located.length ? ` · ${events.length - located.length} sans adresse` : ''}`;
+  $('[data-count]').textContent = `${located.length} date${located.length > 1 ? 's' : ''} sur la carte${events.length - located.length ? ` · ${events.length - located.length} sans position` : ''}`;
+  // Les dates dont le lieu n'a pas pu être placé : on les montre quand même, sous la carte, avec la marche à suivre
+  const unplaced = events.filter((e) => e.lat == null || e.lng == null);
+  if (unplaced.length) {
+    const names = [...new Set(unplaced.map((e) => e.venue_name || 'lieu sans nom'))];
+    $('[data-unplaced]').innerHTML = String(html`<details class="card more unplaced">
+      <summary>${unplaced.length} date${unplaced.length > 1 ? 's' : ''} pas encore sur la carte</summary>
+      <p class="small muted">Leur lieu n’a pas d’adresse reconnue : ${names.join(', ')}.
+        ${isAdmin() ? html`Corrigez l’adresse dans <a href="/admin?onglet=lieux">Administration → Lieux</a>, ou lancez « Placer les lieux sur la carte ».`
+          : 'Un administrateur peut corriger l’adresse ; elle sera alors placée automatiquement.'}</p>
+      <div class="list-events">${unplaced.slice(0, 20).map((e) => eventCard(e, { showDate: true }))}</div>
+    </details>`);
+  }
   const byVenue = new Map();
   for (const e of located) { const k = `${e.lat},${e.lng}`; if (!byVenue.has(k)) byVenue.set(k, []); byVenue.get(k).push(e); }
   const bounds = new ml.LngLatBounds();

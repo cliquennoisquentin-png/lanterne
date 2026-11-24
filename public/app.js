@@ -3,6 +3,7 @@ import { html, raw, $, $$, icon, logo, api, toast, STATUS, TYPES, storage } from
 import { state, isMember, isAdmin, navigate, setRenderer, loadAssos, loadEvents, saveFilters, filtersActive, invalidate, requireLoginToast, placeKey } from './core.js';
 import { monthView, listView, mapView, eventView, mapStyle } from './views-agenda.js';
 import { eventForm } from './views-form.js';
+import { territoryView } from './views-territoire.js';
 import { directoryView, profileView, registerView, loginView, signupView, accountView, adminView, legalView, authVerifyView, authInviteView } from './views-other.js';
 import { playSplash } from './splash.js';
 import { watchUpdates } from './update.js';
@@ -58,7 +59,7 @@ function renderShell() {
   const u = state.user;
   const dark = document.documentElement.dataset.theme !== 'light';
   const inList = path.startsWith('/liste');
-  const isAgenda = (p) => p === '/' || p.startsWith('/carte') || p.startsWith('/evenement') || p.startsWith('/nouveau') || (isAdmin() && p.startsWith('/liste'));
+  const isAgenda = (p) => p === '/' || p.startsWith('/carte') || p.startsWith('/territoire') || p.startsWith('/evenement') || p.startsWith('/nouveau') || (isAdmin() && p.startsWith('/liste'));
   const cur = (on) => (on ? raw('aria-current="page"') : '');
   const shell = document.getElementById('shell') || (() => {
     const el = document.createElement('div'); el.id = 'shell'; document.getElementById('app').append(el); return el;
@@ -154,6 +155,7 @@ const routes = [
   [/^\/$/, () => monthView()],
   [/^\/liste\/?$/, () => listView()],
   [/^\/carte\/?$/, () => mapView()],
+  [/^\/territoire\/?$/, () => territoryView()],
   [/^\/evenement\/(\d+)\/modifier\/?$/, (m) => eventForm(Number(m[1]))],
   [/^\/evenement\/(\d+)\/?$/, (m) => eventView(Number(m[1]))],
   [/^\/nouveau\/?$/, () => eventForm()],
@@ -224,6 +226,7 @@ window.addEventListener('unhandledrejection', (ev) => {
     const cfg = await api('/api/config');
     state.user = cfg.user; state.palette = cfg.palette; state.categories = cfg.categories;
     state.passwordLogin = cfg.password_login !== false;
+    state.tourisme = cfg.tourisme !== false;
     window.lanterne.contact = cfg.contact || '';
     watchUpdates(cfg.version);
   } catch (err) {

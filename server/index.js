@@ -11,6 +11,8 @@ import { initDb, q, one, all, tx, closeDb } from './db.js';
 import { loginMail, inviteMail, adminNewAssoMail, approvedMail, sendMail, describeMailSetup, backupMail } from './mail.js';
 import { buildBackup, getMeta, setMeta } from './backup.js';
 import { buildCalendar } from './ics.js';
+import { geocode } from './geocode.js';
+import { getTourismEvents, SOURCE as TOURISME_SOURCE, TOURISME_ENABLED } from './tourisme.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..');
@@ -105,7 +107,7 @@ const CSP = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https://tiles.openfreemap.org",
   "font-src 'self' data:",
-  "connect-src 'self' https://tiles.openfreemap.org https://data.geopf.fr",
+  "connect-src 'self' blob: https://tiles.openfreemap.org https://data.geopf.fr",
   "worker-src 'self' blob:",
   "child-src 'self' blob:",
   "manifest-src 'self'",
@@ -269,7 +271,7 @@ app.get('/health', async (req, res) => {
 // ---------- configuration ----------
 app.get('/api/config', wrap(async (req, res) => {
   const categories = await all('SELECT id, name, position, active FROM categories ORDER BY position, name');
-  res.json({ palette: PALETTE, categories, user: publicUser(req.user), contact: process.env.CONTACT_EMAIL || '', version: VERSION, password_login: PASSWORD_LOGIN });
+  res.json({ palette: PALETTE, categories, user: publicUser(req.user), contact: process.env.CONTACT_EMAIL || '', version: VERSION, password_login: PASSWORD_LOGIN, tourisme: TOURISME_ENABLED });
 }));
 
 // ---------- authentification ----------
@@ -609,6 +611,32 @@ app.get('/api/venues', wrap(async (req, res) => {
   res.json({ venues: await all('SELECT id, name, address, city, citycode, district, lat, lng, archived FROM venues ORDER BY lower(name)') });
 }));
 
+// Une adresse tapée sans choisir de suggestion : le serveur cherche lui-même sa position,
+// pour que le lieu apparaisse sur la carte. Sans réponse du service, le lieu reste simplement hors carte.
+async function placeVenue(v) {
+  if (v.lat != null && v.lng != null) return v;
+  const text = [v.address, v.address && v.city && !v.address.toLowerCase().includes(v.city.toLowerCase()) ? v.city : ''].filter(Boolean).join(' ');
+  if (!text) return v;
+  const g = await geocode(text);
+  if (!g) return v;
+  return { ...v, lat: g.lat, lng: g.lng, city: v.city || g.city, citycode: v.citycode || g.citycode };
+}
+
+// Au démarrage et à la demande d'un administrateur : place les lieux qui ont une adresse mais pas de position
+async function placeMissingVenues() {
+  const rows = await all(`SELECT * FROM venues WHERE (lat IS NULL OR lng IS NULL) AND address <> '' AND NOT archived ORDER BY id LIMIT 200`);
+  const placed = []; const failed = [];
+  for (const v of rows) {
+    const p = await placeVenue(v);
+    if (p.lat != null) {
+      await q('UPDATE venues SET lat = $1, lng = $2, city = $3, citycode = $4 WHERE id = $5', [p.lat, p.lng, p.city, p.citycode, v.id]);
+      placed.push(v.name);
+    } else failed.push(v.name);
+  }
+  if (rows.length) console.log(`[carte] lieux placés automatiquement : ${placed.length} ; adresse introuvable : ${failed.length}`);
+  return { placed, failed };
+}
+
 function venueInput(b) {
   const lat = b.lat === null || b.lat === '' || b.lat === undefined ? null : Number(b.lat);
   const lng = b.lng === null || b.lng === '' || b.lng === undefined ? null : Number(b.lng);
@@ -624,6 +652,7 @@ app.post('/api/venues', wrap(async (req, res) => {
   if (!v.name) fail(400, 'Indiquez le nom du lieu.');
   const dup = await one('SELECT * FROM venues WHERE lower(name) = lower($1) AND lower(city) = lower($2) AND NOT archived', [v.name, v.city]);
   if (dup) return res.json({ venue: dup });
+  Object.assign(v, await placeVenue(v));
   const venue = await one('INSERT INTO venues (name, address, city, citycode, district, lat, lng, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',
     [v.name, v.address, v.city, v.citycode, v.district, v.lat, v.lng, u.id]);
   await logHistory({ query: q }, { entity: 'venue', entityId: venue.id, action: 'création', user: u, after: venue });
@@ -634,12 +663,27 @@ app.put('/api/venues/:id', wrap(async (req, res) => {
   const u = requireAdmin(req);
   const before = await one('SELECT * FROM venues WHERE id = $1', [Number(req.params.id)]);
   if (!before) fail(404, 'Lieu introuvable.');
-  const v = venueInput({ ...before, ...req.body });
+  // Nouvelle adresse sans position choisie : l'ancienne position ne vaut plus, on cherche la nouvelle
+  const moved = typeof req.body.address === 'string' && req.body.address.trim() !== before.address && req.body.lat === undefined;
+  const v = await placeVenue(venueInput({ ...before, ...req.body, ...(moved ? { lat: null, lng: null, citycode: '' } : {}) }));
   const archived = typeof req.body.archived === 'boolean' ? req.body.archived : before.archived;
   const after = await one('UPDATE venues SET name=$1, address=$2, city=$3, citycode=$4, district=$5, lat=$6, lng=$7, archived=$8 WHERE id=$9 RETURNING *',
     [v.name || before.name, v.address, v.city, v.citycode, v.district, v.lat, v.lng, archived, before.id]);
   await logHistory({ query: q }, { entity: 'venue', entityId: before.id, action: 'modification', user: u, before, after });
   res.json({ venue: after });
+}));
+
+app.post('/api/admin/venues/place', wrap(async (req, res) => {
+  requireAdmin(req);
+  if (limited(`place:${req.ip}`, 10, 60 * 60e3)) fail(429, 'Réessayez dans un moment.');
+  res.json(await placeMissingVenues());
+}));
+
+// ---------- événements du territoire (DATAtourisme) ----------
+app.get('/api/tourisme', wrap(async (req, res) => {
+  const r = await getTourismEvents();
+  res.setHeader('Cache-Control', 'public, max-age=600');
+  res.json({ ...r, source: TOURISME_SOURCE });
 }));
 
 // ---------- événements ----------
@@ -1143,6 +1187,7 @@ await initDb();
 const server = app.listen(PORT, () => {
   console.log(`[lanterne] prêt sur http://localhost:${PORT} · version ${VERSION}`);
   console.log(`[mail] ${describeMailSetup()}`);
+  setTimeout(() => placeMissingVenues().catch((e) => console.error('[carte]', e.message)), 5000).unref();
   console.log(`[lanterne] adresse publique des liens : ${process.env.PUBLIC_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : 'adresse de la requête')}`);
 });
 

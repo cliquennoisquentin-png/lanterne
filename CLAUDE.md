@@ -81,6 +81,17 @@ code, les commits et la documentation.
   Les sauvegardes contiennent les empreintes des mots de passe (pas les mots de passe).
 - **Un élément `hidden` reste toujours caché** (`[hidden] { display: none !important; }` en tête de
   `styles.css`) : sans cette règle, `.field` ou les cartes l'emportaient et l'affichaient quand même.
+- **Les lieux sont placés sur la carte par le serveur** (`server/geocode.js`, Géoplateforme IGN) quand une
+  adresse est tapée sans choisir de suggestion, quand un administrateur la corrige, et au démarrage pour les
+  lieux qui ont une adresse mais pas de position. Raison : en novembre 2026, la carte en ligne montrait
+  « 1 date sur la carte · 2 sans adresse » ; le fond de carte, lui, fonctionnait.
+- **Événements du territoire** (`/territoire`, `server/tourisme.js`) : fichier DATAtourisme « fma » sur
+  data.gouv.fr, lu par l'API tabulaire dans un carré autour de Saint-Étienne, gardé 6 heures en mémoire et
+  copié dans la table `meta` (repli si data.gouv.fr ne répond pas). Marchés et périodes de plus d'un mois sont
+  « en continu » et masqués par défaut. Licence Ouverte : la source est toujours citée sous la liste.
+  Si l'identifiant du fichier change sur data.gouv.fr, le régler dans `TOURISME_RESOURCE`.
+- **Les tests ne dépendent pas d'internet** : `scripts/test.mjs` lance un faux service d'adresses et un faux
+  data.gouv.fr locaux.
 - **Les tests ne lisent pas `.env`** (`NODE_ENV=test`) : impossible de toucher la vraie base par accident.
 
 ## Pas dans cette version

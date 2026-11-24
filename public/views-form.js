@@ -52,7 +52,7 @@ export function venueCreator(container, initialName, onCreated) {
       <div class="field combo"><span class="field-label">Adresse</span>
         <input class="input" name="v_addr" autocomplete="off" placeholder="Commencez à taper l’adresse…">
         <div class="combo-list" data-addr-list hidden></div>
-        <p class="hint">Choisissez dans la liste pour placer le lieu sur la carte.</p></div>
+        <p class="hint">Choisissez dans la liste si possible. Sinon, tapez l’adresse complète : nous la placerons sur la carte.</p></div>
       <label class="field"><span>Quartier (facultatif)</span><input class="input" name="v_district" maxlength="80" placeholder="Jacquard, Crêt de Roch, Bellevue…"></label>
       <p class="error-text" data-v-err></p>
       <div class="row"><button type="button" class="btn primary small" data-v-save>Ajouter ce lieu</button><button type="button" class="btn ghost small" data-v-cancel>Annuler</button></div>
@@ -74,6 +74,10 @@ export function venueCreator(container, initialName, onCreated) {
       await loadVenues(true);
       container.innerHTML = '';
       onCreated(venue);
+      if (venue.lat == null) {
+        toast(addrText ? 'Lieu ajouté, mais l’adresse n’a pas été trouvée : il ne sera pas sur la carte. Un administrateur pourra la corriger.'
+          : 'Lieu ajouté sans adresse : il ne sera pas sur la carte.', 'error');
+      }
     } catch (err) { $('[data-v-err]', container).textContent = err.message; }
   });
   $('[name=v_name]', container).focus();

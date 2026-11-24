@@ -490,7 +490,11 @@ export async function adminView() {
           <button class="btn small ${c.active ? 'ghost' : ''}" data-cat-toggle="${c.id}">${c.active ? 'Masquer' : 'Réactiver'}</button></td></tr>`)}</tbody></table>
       <form class="row" data-cat-add style="margin-top:12px"><input class="input" name="name" placeholder="Nouvelle catégorie" style="flex:1" required><button class="btn primary">Ajouter</button></form></div>`;
   } else if (tab === 'lieux') {
+    const unplaced = state.venues.filter((v) => !v.archived && v.lat == null);
     body = html`<div class="card"><p class="small muted">La liste partagée des lieux, enrichie par les associations. Corrigez un nom ou une adresse, ou archivez un doublon.</p>
+      ${unplaced.length ? html`<div class="notice warn row" style="margin-bottom:12px"><span style="flex:1;min-width:0">${unplaced.length} lieu${unplaced.length > 1 ? 'x' : ''} pas encore sur la carte.
+        Ceux qui ont une adresse peuvent être placés automatiquement ; pour les autres, ajoutez l’adresse avec « Modifier ».</span>
+        <button class="btn small" data-venues-place>${icon('map')}Placer les lieux sur la carte</button></div>` : ''}
       <input class="input" type="search" placeholder="Chercher un lieu…" data-venue-q style="margin-bottom:10px">
       <div class="table-wrap"><table class="table"><thead><tr><th>Lieu</th><th>Adresse</th><th>Carte</th><th></th></tr></thead><tbody>
       ${state.venues.map((v) => html`<tr data-venue-row="${(v.name + ' ' + v.city + ' ' + v.address).toLowerCase()}" style="${v.archived ? 'opacity:.5' : ''}"><td>${v.name}${v.district ? html`<div class="tiny faint">${v.district}</div>` : ''}</td><td class="small muted">${v.address || '—'}</td>
@@ -551,6 +555,15 @@ export async function adminView() {
   $('[data-cat-add]')?.addEventListener('submit', async (ev) => { ev.preventDefault(); try { await api('/api/categories', { method: 'POST', body: { name: ev.target.name.value } }); reload(); } catch (err) { toast(err.message, 'error'); } });
   $('[data-venue-q]')?.addEventListener('input', (ev) => { const q = ev.target.value.toLowerCase(); $$('[data-venue-row]').forEach((r) => { r.hidden = q && !r.dataset.venueRow.includes(q); }); });
   $$('[data-venue-arch]').forEach((b) => b.addEventListener('click', async () => { const v = state.venues.find((x) => x.id === Number(b.dataset.venueArch)); await api(`/api/venues/${v.id}`, { method: 'PUT', body: { archived: !v.archived } }); adminView(); }));
+  $('[data-venues-place]')?.addEventListener('click', async (ev) => {
+    const b = ev.currentTarget; b.disabled = true; b.textContent = 'Recherche des adresses…';
+    try {
+      const r = await api('/api/admin/venues/place', { method: 'POST', body: {} });
+      invalidate();
+      toast(`${r.placed.length} lieu${r.placed.length > 1 ? 'x' : ''} placé${r.placed.length > 1 ? 's' : ''} sur la carte${r.failed.length ? ` · adresse introuvable pour : ${r.failed.join(', ')}` : ''}.`, r.failed.length ? 'error' : '');
+      await loadVenues(true); adminView();
+    } catch (err) { toast(err.message, 'error'); b.disabled = false; }
+  });
   $$('[data-venue-edit]').forEach((b) => b.addEventListener('click', () => editVenueModal(state.venues.find((x) => x.id === Number(b.dataset.venueEdit)))));
   $('[data-admin-add]')?.addEventListener('submit', async (ev) => { ev.preventDefault(); try { await api('/api/admin/admins', { method: 'POST', body: { email: ev.target.email.value } }); toast('Administrateur ajouté.'); adminView(); } catch (err) { toast(err.message, 'error'); } });
   $$('[data-admin-rm]').forEach((b) => b.addEventListener('click', async () => { try { await api(`/api/admin/admins/${b.dataset.adminRm}`, { method: 'DELETE' }); await refreshMe(); adminView(); } catch (err) { toast(err.message, 'error'); } }));
@@ -574,8 +587,14 @@ function editVenueModal(v) {
       bindAddressField(d.querySelector('[name=addr]'), d.querySelector('[data-addr-list]'), (it) => { picked = it; });
       d.querySelector('[data-save]').addEventListener('click', async () => {
         const body = { name: d.querySelector('[name=name]').value, district: d.querySelector('[name=district]').value };
+        const typed = d.querySelector('[name=addr]').value.trim();
         if (picked) Object.assign(body, { address: picked.label, city: picked.city, citycode: picked.citycode, lat: picked.lat, lng: picked.lng });
-        try { await api(`/api/venues/${v.id}`, { method: 'PUT', body }); invalidate(); close(); toast('Lieu enregistré.'); adminView(); } catch (err) { d.querySelector('[data-err]').textContent = err.message; }
+        else if (typed !== v.address) body.address = typed; // adresse tapée à la main : le serveur cherche sa position
+        try {
+          const r = await api(`/api/venues/${v.id}`, { method: 'PUT', body }); invalidate(); close();
+          toast(r.venue.lat == null && r.venue.address ? 'Lieu enregistré, mais l’adresse n’a pas été trouvée sur la carte.' : 'Lieu enregistré.', r.venue.lat == null && r.venue.address ? 'error' : '');
+          adminView();
+        } catch (err) { d.querySelector('[data-err]').textContent = err.message; }
       });
     },
   });
@@ -604,7 +623,8 @@ export function legalView() {
     <ul>
       <li>Envoi des mails : un service d’envoi transactionnel (Brevo ou Resend), qui ne reçoit que l’adresse du destinataire et le contenu du mail.</li>
       <li>Fond de carte : OpenFreeMap, © OpenMapTiles, © OpenStreetMap et ses contributeurs.</li>
-      <li>Recherche d’adresse : Géoplateforme de l’IGN (service public).</li>
+      <li>Recherche d’adresse et placement des lieux sur la carte : Géoplateforme de l’IGN (service public). Elle ne reçoit que l’adresse du lieu.</li>
+      <li>Événements du territoire : DATAtourisme, plateforme nationale des données touristiques (data.gouv.fr, Licence Ouverte). Les données sont publiées par les offices de tourisme ; Lanterne ne fait que les afficher.</li>
     </ul>
     <h2>Contenus</h2>
     <p>Les associations publient librement leurs dates et en sont responsables. Les administrateurs peuvent intervenir en cas de problème.</p>

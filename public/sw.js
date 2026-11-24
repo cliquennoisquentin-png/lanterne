@@ -1,6 +1,6 @@
 // Lanterne — service worker : l'appli s'ouvre même sans réseau, les données restent fraîches
 const VERSION = 'lanterne-v3';
-const SHELL = ['/', '/styles.css', '/app.js', '/lib.js', '/core.js', '/views-agenda.js', '/views-form.js', '/views-other.js', '/splash.js', '/update.js',
+const SHELL = ['/', '/styles.css', '/app.js', '/lib.js', '/core.js', '/views-agenda.js', '/views-form.js', '/views-other.js', '/views-territoire.js', '/splash.js', '/update.js',
   '/manifest.webmanifest', '/icons/lanterne.svg', '/icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {
@@ -21,7 +21,7 @@ self.addEventListener('fetch', (e) => {
 
   // Données : réseau d'abord, copie de secours hors ligne
   if (url.pathname.startsWith('/api/')) {
-    if (url.pathname === '/api/version' || !['/api/events', '/api/config', '/api/associations'].some((p) => url.pathname.startsWith(p))) return;
+    if (url.pathname === '/api/version' || !['/api/events', '/api/config', '/api/associations', '/api/tourisme'].some((p) => url.pathname.startsWith(p))) return;
     e.respondWith(fetch(req).then((res) => {
       if (res.ok) { const copy = res.clone(); caches.open(VERSION).then((c) => c.put(req, copy)); }
       return res;
