@@ -1,0 +1,887 @@
+// Lanterne — serveur
+import express from 'express';
+import cookieParser from 'cookie-parser';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { initDb, q, one, all, tx, closeDb } from './db.js';
+import { loginMail, inviteMail, adminNewAssoMail, approvedMail, sendMail } from './mail.js';
+import { buildCalendar } from './ics.js';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const root = path.join(here, '..');
+const PROD = process.env.NODE_ENV === 'production';
+const PORT = Number(process.env.PORT || 3000);
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+const SESSION_DAYS = 90;
+const COOKIE = 'lt_sid';
+
+export const PALETTE = [
+  { name: 'Ciel', hex: '#2B8FD9' }, { name: 'Cyan', hex: '#0095B0' }, { name: 'Turquoise', hex: '#00967F' },
+  { name: 'Vert', hex: '#2F9533' }, { name: 'Citron', hex: '#7E8900' }, { name: 'Ambre', hex: '#B57600' },
+  { name: 'Orange', hex: '#E0661C' }, { name: 'Corail', hex: '#F0506E' }, { name: 'Rose', hex: '#E040A0' },
+  { name: 'Magenta', hex: '#C04BE0' }, { name: 'Violet', hex: '#8A63F0' }, { name: 'Indigo', hex: '#5B7BF5' },
+];
+const PALETTE_HEX = new Set(PALETTE.map((p) => p.hex));
+
+// ---------- utilitaires ----------
+const token = (n = 32) => crypto.randomBytes(n).toString('base64url');
+const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
+const normEmail = (e) => String(e || '').trim().toLowerCase();
+const isEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && e.length <= 200;
+const str = (v, max = 500) => String(v ?? '').trim().slice(0, max);
+const slugify = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'asso';
+const safeUrl = (u) => { const s = str(u, 500); if (!s) return ''; const v = /^https?:\/\//i.test(s) ? s : `https://${s}`; try { const x = new URL(v); return ['http:', 'https:'].includes(x.protocol) ? x.toString() : ''; } catch { return ''; } };
+
+class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
+const fail = (status, message) => { throw new HttpError(status, message); };
+const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
+function baseUrl(req) {
+  if (process.env.PUBLIC_URL) return process.env.PUBLIC_URL.replace(/\/$/, '');
+  if (process.env.RAILWAY_PUBLIC_DOMAIN) return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
+  return `${req.protocol}://${req.get('host')}`;
+}
+
+// Limiteur simple en mémoire (demandes de lien de connexion)
+const hits = new Map();
+function limited(key, max, windowMs) {
+  const now = Date.now();
+  const arr = (hits.get(key) || []).filter((t) => now - t < windowMs);
+  arr.push(now);
+  hits.set(key, arr);
+  return arr.length > max;
+}
+
+// ---------- application ----------
+const app = express();
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
+app.use(express.json({ limit: '4mb' }));
+app.use(cookieParser());
+
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('X-Frame-Options', 'DENY');
+  next();
+});
+
+// Protection CSRF : toute écriture sur l'API doit porter l'en-tête maison
+app.use('/api', (req, res, next) => {
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.get('X-Requested-With') !== 'lanterne') {
+    return res.status(403).json({ error: 'Requête refusée.' });
+  }
+  next();
+});
+
+// Session
+app.use(wrap(async (req, res, next) => {
+  req.user = null;
+  const sid = req.cookies[COOKIE];
+  if (sid) {
+    req.user = await one(
+      `SELECT u.*, a.status AS asso_status, a.name AS asso_name, a.slug AS asso_slug, a.color AS asso_color
+       FROM sessions s JOIN users u ON u.id = s.user_id LEFT JOIN associations a ON a.id = u.association_id
+       WHERE s.id = $1 AND s.expires_at > now()`, [sha(sid)]);
+  }
+  next();
+}));
+
+const requireUser = (req) => { if (!req.user) fail(401, 'Connectez-vous pour continuer.'); return req.user; };
+const requireAdmin = (req) => { const u = requireUser(req); if (!u.is_admin) fail(403, 'Réservé aux administrateurs.'); return u; };
+const memberAssoId = (u) => (u && u.association_id && u.asso_status === 'approved' ? u.association_id : null);
+const requireMember = (req) => {
+  const u = requireUser(req);
+  if (!memberAssoId(u)) fail(403, u.association_id ? 'Votre association attend encore sa validation.' : 'Vous devez être rattaché à une association.');
+  return u;
+};
+
+async function createSession(res, userId) {
+  const sid = token();
+  await q(`INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, now() + interval '${SESSION_DAYS} days')`, [sha(sid), userId]);
+  res.cookie(COOKIE, sid, { httpOnly: true, secure: PROD, sameSite: 'lax', maxAge: SESSION_DAYS * 864e5, path: '/' });
+}
+
+async function ensureUser(email, extra = {}) {
+  let u = await one('SELECT * FROM users WHERE email = $1', [email]);
+  if (!u) {
+    u = await one('INSERT INTO users (email, name, association_id, is_admin, ics_token) VALUES ($1,$2,$3,$4,$5) RETURNING *',
+      [email, extra.name || '', extra.association_id || null, ADMIN_EMAILS.includes(email), token(18)]);
+  } else if (ADMIN_EMAILS.includes(email) && !u.is_admin) {
+    u = await one('UPDATE users SET is_admin = true WHERE id = $1 RETURNING *', [u.id]);
+  }
+  return u;
+}
+
+async function logHistory(db, { entity, entityId, action, user, before = null, after = null }) {
+  await db.query(
+    'INSERT INTO history (entity, entity_id, action, user_id, user_name, association_name, before, after) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+    [entity, entityId, action, user?.id || null, user?.name || user?.email || '', user?.asso_name || '',
+      before ? JSON.stringify(before) : null, after ? JSON.stringify(after) : null]);
+}
+
+function publicUser(u) {
+  if (!u) return null;
+  return {
+    id: u.id, email: u.email, name: u.name, is_admin: u.is_admin, ics_token: u.ics_token,
+    association: u.association_id ? { id: u.association_id, name: u.asso_name, slug: u.asso_slug, color: u.asso_color, status: u.asso_status } : null,
+  };
+}
+
+// ---------- configuration ----------
+app.get('/api/config', wrap(async (req, res) => {
+  const categories = await all('SELECT id, name, position, active FROM categories ORDER BY position, name');
+  res.json({ palette: PALETTE, categories, user: publicUser(req.user), contact: process.env.CONTACT_EMAIL || '' });
+}));
+
+// ---------- authentification ----------
+app.post('/api/auth/request', wrap(async (req, res) => {
+  const email = normEmail(req.body.email);
+  if (!isEmail(email)) fail(400, 'Adresse mail invalide.');
+  if (limited(`ip:${req.ip}`, 20, 15 * 60e3) || limited(`mail:${email}`, 5, 15 * 60e3)) fail(429, 'Trop de demandes. Réessayez dans quelques minutes.');
+  const user = await one('SELECT id FROM users WHERE email = $1', [email]);
+  const base = baseUrl(req);
+  if (user || ADMIN_EMAILS.includes(email)) {
+    const t = token();
+    await q(`INSERT INTO login_tokens (token_hash, email, expires_at) VALUES ($1, $2, now() + interval '30 minutes')`, [sha(t), email]);
+    await loginMail(email, `${base}/auth/verify?token=${t}`);
+  } else {
+    await sendMail({
+      to: email,
+      subject: 'Connexion à Lanterne',
+      html: `<p>Aucun compte Lanterne n’est associé à cette adresse.</p><p>Pour rejoindre Lanterne, inscrivez votre association : <a href="${base}/inscription">${base}/inscription</a>, ou demandez à un membre de votre association de vous inviter.</p>`,
+      text: `Aucun compte Lanterne n'est associé à cette adresse. Inscrivez votre association : ${base}/inscription, ou demandez une invitation à un membre de votre association.`,
+    });
+  }
+  // Même réponse dans tous les cas : on ne révèle pas qui a un compte
+  res.json({ ok: true });
+}));
+
+app.get('/auth/verify', wrap(async (req, res) => {
+  const t = String(req.query.token || '');
+  const row = t && await one(`UPDATE login_tokens SET used_at = now() WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now() RETURNING email`, [sha(t)]);
+  if (!row) return res.redirect('/connexion?erreur=lien');
+  const u = await ensureUser(row.email);
+  await createSession(res, u.id);
+  res.redirect(u.name ? '/' : '/compte?bienvenue=1');
+}));
+
+app.get('/auth/invite', wrap(async (req, res) => {
+  const t = String(req.query.token || '');
+  const inv = t && await one(`SELECT i.*, a.status FROM invitations i JOIN associations a ON a.id = i.association_id WHERE i.token_hash = $1 AND i.accepted_at IS NULL AND i.created_at > now() - interval '30 days'`, [sha(t)]);
+  if (!inv) return res.redirect('/connexion?erreur=invitation');
+  let u = await one('SELECT * FROM users WHERE email = $1', [inv.email]);
+  if (u && u.association_id && u.association_id !== inv.association_id) {
+    return res.redirect('/connexion?erreur=deja-membre');
+  }
+  if (!u) u = await ensureUser(inv.email, { association_id: inv.association_id });
+  else await q('UPDATE users SET association_id = $1 WHERE id = $2', [inv.association_id, u.id]);
+  await q('UPDATE invitations SET accepted_at = now() WHERE id = $1', [inv.id]);
+  await createSession(res, u.id);
+  res.redirect(u.name ? '/' : '/compte?bienvenue=1');
+}));
+
+app.post('/api/auth/logout', wrap(async (req, res) => {
+  const sid = req.cookies[COOKIE];
+  if (sid) await q('DELETE FROM sessions WHERE id = $1', [sha(sid)]);
+  res.clearCookie(COOKIE, { path: '/' });
+  res.json({ ok: true });
+}));
+
+// ---------- compte ----------
+app.get('/api/me', (req, res) => res.json({ user: publicUser(req.user) }));
+
+app.put('/api/me', wrap(async (req, res) => {
+  const u = requireUser(req);
+  const name = str(req.body.name, 80);
+  if (!name) fail(400, 'Indiquez votre nom.');
+  await q('UPDATE users SET name = $1 WHERE id = $2', [name, u.id]);
+  res.json({ ok: true });
+}));
+
+app.post('/api/me/ics-token', wrap(async (req, res) => {
+  const u = requireUser(req);
+  const t = token(18);
+  await q('UPDATE users SET ics_token = $1 WHERE id = $2', [t, u.id]);
+  res.json({ ics_token: t });
+}));
+
+app.post('/api/me/leave', wrap(async (req, res) => {
+  const u = requireUser(req);
+  await q('UPDATE users SET association_id = NULL WHERE id = $1', [u.id]);
+  res.json({ ok: true });
+}));
+
+// Suppression du compte : on efface la personne et on anonymise ses traces
+app.delete('/api/me', wrap(async (req, res) => {
+  const u = requireUser(req);
+  await tx(async (db) => {
+    await db.query(`UPDATE history SET user_name = 'Compte supprimé' WHERE user_id = $1`, [u.id]);
+    await db.query(`UPDATE comments SET author_name = 'Compte supprimé' WHERE user_id = $1`, [u.id]);
+    await db.query('DELETE FROM login_tokens WHERE email = $1', [u.email]);
+    await db.query('DELETE FROM invitations WHERE email = $1', [u.email]);
+    await db.query('DELETE FROM users WHERE id = $1', [u.id]);
+  });
+  res.clearCookie(COOKIE, { path: '/' });
+  res.json({ ok: true });
+}));
+
+// ---------- images ----------
+const IMG_RE = /^data:(image\/(?:png|jpeg|webp|svg\+xml));base64,([A-Za-z0-9+/=]+)$/;
+async function saveImage(dataUrl) {
+  const m = IMG_RE.exec(String(dataUrl || ''));
+  if (!m) fail(400, 'Image invalide (PNG, JPEG, WebP ou SVG).');
+  const buf = Buffer.from(m[2], 'base64');
+  if (buf.length > 2.5 * 1024 * 1024) fail(400, 'Image trop lourde (2,5 Mo maximum).');
+  if (m[1] === 'image/svg+xml' && /<script|on\w+=|javascript:/i.test(buf.toString('utf8'))) fail(400, 'Image SVG refusée.');
+  const id = token(12);
+  await q('INSERT INTO images (id, mime, data) VALUES ($1, $2, $3)', [id, m[1], buf]);
+  return id;
+}
+
+app.post('/api/images', wrap(async (req, res) => {
+  requireUser(req);
+  res.json({ id: await saveImage(req.body.data) });
+}));
+
+app.get('/img/:id', wrap(async (req, res) => {
+  const img = await one('SELECT mime, data FROM images WHERE id = $1', [req.params.id]);
+  if (!img) return res.status(404).end();
+  res.setHeader('Content-Type', img.mime);
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  if (img.mime === 'image/svg+xml') res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'");
+  res.send(Buffer.from(img.data));
+}));
+
+// ---------- inscription d'une association ----------
+async function uniqueSlug(name, exceptId = null) {
+  const base = slugify(name);
+  let slug = base;
+  for (let i = 2; ; i++) {
+    const hit = await one('SELECT id FROM associations WHERE slug = $1', [slug]);
+    if (!hit || hit.id === exceptId) return slug;
+    slug = `${base}-${i}`;
+  }
+}
+
+app.post('/api/register', wrap(async (req, res) => {
+  if (limited(`reg:${req.ip}`, 5, 60 * 60e3)) fail(429, 'Trop de demandes. Réessayez plus tard.');
+  const a = req.body.association || {};
+  const p = req.body.person || {};
+  const email = req.user ? req.user.email : normEmail(p.email);
+  const personName = req.user ? (req.user.name || str(p.name, 80)) : str(p.name, 80);
+  const name = str(a.name, 120);
+  const contact = normEmail(a.contact_email || email);
+  if (!name) fail(400, 'Indiquez le nom de l’association.');
+  if (!isEmail(email)) fail(400, 'Indiquez votre adresse mail.');
+  if (!personName) fail(400, 'Indiquez votre nom.');
+  if (!isEmail(contact)) fail(400, 'Adresse de contact invalide.');
+  const color = PALETTE_HEX.has(a.color) ? a.color : PALETTE[0].hex;
+
+  const existing = await one('SELECT * FROM users WHERE email = $1', [email]);
+  if (existing && existing.association_id) fail(409, 'Cette adresse est déjà rattachée à une association.');
+  const dup = await one('SELECT id FROM associations WHERE lower(name) = lower($1)', [name]);
+  if (dup) fail(409, 'Une association porte déjà ce nom. Demandez à ses membres de vous inviter.');
+
+  const logoId = a.logo ? await saveImage(a.logo) : null;
+  const slug = await uniqueSlug(name);
+  const asso = await one(
+    `INSERT INTO associations (name, slug, color, logo_id, description, contact_email, phone, website, commune, socials)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+    [name, slug, color, logoId, str(a.description, 2000), contact, str(a.phone, 40), safeUrl(a.website), str(a.commune, 80), JSON.stringify({})]);
+
+  let u = existing;
+  if (u) u = await one('UPDATE users SET association_id = $1, name = COALESCE(NULLIF(name, \'\'), $2) WHERE id = $3 RETURNING *', [asso.id, personName, u.id]);
+  else u = await ensureUser(email, { name: personName, association_id: asso.id });
+  await logHistory({ query: q }, { entity: 'association', entityId: asso.id, action: 'inscription', user: { ...u, asso_name: name }, after: asso });
+
+  const base = baseUrl(req);
+  const admins = await all('SELECT email FROM users WHERE is_admin');
+  const adminList = new Set([...admins.map((x) => x.email), ...ADMIN_EMAILS]);
+  for (const to of adminList) await adminNewAssoMail(to, name, `${base}/admin`);
+
+  if (!req.user) {
+    const t = token();
+    await q(`INSERT INTO login_tokens (token_hash, email, expires_at) VALUES ($1, $2, now() + interval '30 minutes')`, [sha(t), email]);
+    await loginMail(email, `${base}/auth/verify?token=${t}`);
+  }
+  res.json({ ok: true, slug });
+}));
+
+// ---------- associations ----------
+const ASSO_FIELDS = 'a.id, a.name, a.slug, a.color, a.logo_id, a.description, a.contact_email, a.phone, a.website, a.socials, a.commune, a.status, a.created_at';
+
+app.get('/api/associations', wrap(async (req, res) => {
+  const rows = await all(`SELECT ${ASSO_FIELDS},
+      (SELECT count(*)::int FROM event_orgs eo JOIN events e ON e.id = eo.event_id WHERE eo.association_id = a.id AND e.deleted_at IS NULL AND e.starts_at >= now() AND e.visibility = 'public' AND e.status <> 'option' AND e.type <> 'internal') AS upcoming_public
+    FROM associations a WHERE a.status = 'approved' ORDER BY lower(a.name)`);
+  res.json({ associations: rows });
+}));
+
+app.get('/api/associations/:slug', wrap(async (req, res) => {
+  const a = await one(`SELECT ${ASSO_FIELDS} FROM associations a WHERE a.slug = $1`, [req.params.slug]);
+  const mine = req.user && req.user.association_id === a?.id;
+  if (!a || (a.status !== 'approved' && !mine && !req.user?.is_admin)) fail(404, 'Association introuvable.');
+  let members = null; let invitations = null;
+  if (mine || req.user?.is_admin) {
+    members = await all('SELECT id, name, email FROM users WHERE association_id = $1 ORDER BY lower(name)', [a.id]);
+    invitations = await all('SELECT id, email, created_at FROM invitations WHERE association_id = $1 AND accepted_at IS NULL ORDER BY created_at DESC', [a.id]);
+  }
+  res.json({ association: a, members, invitations, can_edit: !!(mine || req.user?.is_admin) });
+}));
+
+app.put('/api/associations/:id', wrap(async (req, res) => {
+  const u = requireUser(req);
+  const id = Number(req.params.id);
+  if (u.association_id !== id && !u.is_admin) fail(403, 'Vous ne pouvez modifier que votre association.');
+  const before = await one('SELECT * FROM associations WHERE id = $1', [id]);
+  if (!before) fail(404, 'Association introuvable.');
+  const b = req.body;
+  const name = str(b.name, 120) || before.name;
+  let logoId = before.logo_id;
+  if (b.logo === null) logoId = null;
+  else if (typeof b.logo === 'string' && b.logo.startsWith('data:')) logoId = await saveImage(b.logo);
+  const socials = {};
+  for (const k of ['facebook', 'instagram', 'mastodon', 'bluesky', 'tiktok', 'youtube', 'helloasso']) {
+    const v = safeUrl(b.socials?.[k]);
+    if (v) socials[k] = v;
+  }
+  const slug = name !== before.name ? await uniqueSlug(name, id) : before.slug;
+  const after = await one(
+    `UPDATE associations SET name=$1, slug=$2, color=$3, logo_id=$4, description=$5, contact_email=$6, phone=$7, website=$8, commune=$9, socials=$10 WHERE id=$11 RETURNING *`,
+    [name, slug, PALETTE_HEX.has(b.color) ? b.color : before.color, logoId, str(b.description, 2000),
+      isEmail(normEmail(b.contact_email)) ? normEmail(b.contact_email) : before.contact_email,
+      str(b.phone, 40), safeUrl(b.website), str(b.commune, 80), JSON.stringify(socials), id]);
+  await logHistory({ query: q }, { entity: 'association', entityId: id, action: 'modification', user: u, before, after });
+  res.json({ association: after });
+}));
+
+app.post('/api/associations/:id/invitations', wrap(async (req, res) => {
+  const u = requireMember(req);
+  const id = Number(req.params.id);
+  if (u.association_id !== id) fail(403, 'Vous ne pouvez inviter que dans votre association.');
+  const emails = String(req.body.emails || '').split(/[\s,;]+/).map(normEmail).filter(Boolean);
+  if (!emails.length) fail(400, 'Indiquez au moins une adresse.');
+  if (emails.length > 30) fail(400, '30 invitations maximum à la fois.');
+  if (limited(`inv:${u.id}`, 100, 60 * 60e3)) fail(429, 'Trop d’invitations. Réessayez plus tard.');
+  const base = baseUrl(req);
+  const result = { sent: [], skipped: [] };
+  for (const email of emails) {
+    if (!isEmail(email)) { result.skipped.push({ email, reason: 'adresse invalide' }); continue; }
+    const other = await one('SELECT association_id FROM users WHERE email = $1', [email]);
+    if (other?.association_id === id) { result.skipped.push({ email, reason: 'déjà membre' }); continue; }
+    if (other?.association_id) { result.skipped.push({ email, reason: 'déjà dans une autre association' }); continue; }
+    const t = token();
+    await q('INSERT INTO invitations (association_id, email, invited_by, token_hash) VALUES ($1,$2,$3,$4)', [id, email, u.id, sha(t)]);
+    await inviteMail(email, u.asso_name, u.name, `${base}/auth/invite?token=${t}`);
+    result.sent.push(email);
+  }
+  res.json(result);
+}));
+
+app.delete('/api/invitations/:id', wrap(async (req, res) => {
+  const u = requireUser(req);
+  const inv = await one('SELECT * FROM invitations WHERE id = $1', [Number(req.params.id)]);
+  if (!inv) fail(404, 'Invitation introuvable.');
+  if (inv.association_id !== u.association_id && !u.is_admin) fail(403, 'Action non autorisée.');
+  await q('DELETE FROM invitations WHERE id = $1', [inv.id]);
+  res.json({ ok: true });
+}));
+
+// ---------- catégories ----------
+app.post('/api/categories', wrap(async (req, res) => {
+  requireAdmin(req);
+  const name = str(req.body.name, 60);
+  if (!name) fail(400, 'Nom manquant.');
+  const pos = await one('SELECT COALESCE(max(position), 0) + 1 AS p FROM categories');
+  const c = await one('INSERT INTO categories (name, position) VALUES ($1, $2) RETURNING *', [name, pos.p]).catch(() => fail(409, 'Cette catégorie existe déjà.'));
+  res.json({ category: c });
+}));
+
+app.put('/api/categories/:id', wrap(async (req, res) => {
+  requireAdmin(req);
+  const c = await one('UPDATE categories SET name = COALESCE(NULLIF($1, \'\'), name), active = COALESCE($2, active), position = COALESCE($3, position) WHERE id = $4 RETURNING *',
+    [str(req.body.name, 60), typeof req.body.active === 'boolean' ? req.body.active : null, Number.isInteger(req.body.position) ? req.body.position : null, Number(req.params.id)]);
+  if (!c) fail(404, 'Catégorie introuvable.');
+  res.json({ category: c });
+}));
+
+// ---------- lieux ----------
+app.get('/api/venues', wrap(async (req, res) => {
+  requireUser(req);
+  res.json({ venues: await all('SELECT id, name, address, city, citycode, district, lat, lng, archived FROM venues ORDER BY lower(name)') });
+}));
+
+function venueInput(b) {
+  const lat = b.lat === null || b.lat === '' || b.lat === undefined ? null : Number(b.lat);
+  const lng = b.lng === null || b.lng === '' || b.lng === undefined ? null : Number(b.lng);
+  return {
+    name: str(b.name, 120), address: str(b.address, 200), city: str(b.city, 80), citycode: str(b.citycode, 10), district: str(b.district, 80),
+    lat: Number.isFinite(lat) ? lat : null, lng: Number.isFinite(lng) ? lng : null,
+  };
+}
+
+app.post('/api/venues', wrap(async (req, res) => {
+  const u = requireMember(req);
+  const v = venueInput(req.body);
+  if (!v.name) fail(400, 'Indiquez le nom du lieu.');
+  const dup = await one('SELECT * FROM venues WHERE lower(name) = lower($1) AND lower(city) = lower($2) AND NOT archived', [v.name, v.city]);
+  if (dup) return res.json({ venue: dup });
+  const venue = await one('INSERT INTO venues (name, address, city, citycode, district, lat, lng, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',
+    [v.name, v.address, v.city, v.citycode, v.district, v.lat, v.lng, u.id]);
+  await logHistory({ query: q }, { entity: 'venue', entityId: venue.id, action: 'création', user: u, after: venue });
+  res.json({ venue });
+}));
+
+app.put('/api/venues/:id', wrap(async (req, res) => {
+  const u = requireAdmin(req);
+  const before = await one('SELECT * FROM venues WHERE id = $1', [Number(req.params.id)]);
+  if (!before) fail(404, 'Lieu introuvable.');
+  const v = venueInput({ ...before, ...req.body });
+  const archived = typeof req.body.archived === 'boolean' ? req.body.archived : before.archived;
+  const after = await one('UPDATE venues SET name=$1, address=$2, city=$3, citycode=$4, district=$5, lat=$6, lng=$7, archived=$8 WHERE id=$9 RETURNING *',
+    [v.name || before.name, v.address, v.city, v.citycode, v.district, v.lat, v.lng, archived, before.id]);
+  await logHistory({ query: q }, { entity: 'venue', entityId: before.id, action: 'modification', user: u, before, after });
+  res.json({ venue: after });
+}));
+
+// ---------- événements ----------
+const EVENT_SELECT = `
+  SELECT e.*, a.name AS asso_name, a.slug AS asso_slug, a.color AS asso_color,
+         v.name AS venue_name, v.address AS venue_address, v.city AS venue_city, v.district AS venue_district, v.lat, v.lng,
+         c.name AS category_name,
+         r.starts_at AS rescheduled_from_date,
+         COALESCE((SELECT json_agg(json_build_object('id', oa.id, 'name', oa.name, 'slug', oa.slug, 'color', oa.color) ORDER BY oa.id = e.association_id DESC, oa.name)
+                   FROM event_orgs eo JOIN associations oa ON oa.id = eo.association_id WHERE eo.event_id = e.id), '[]') AS orgs,
+         COALESCE((SELECT json_agg(json_build_object('id', ta.id, 'name', ta.name, 'slug', ta.slug, 'color', ta.color, 'kind', t.kind) ORDER BY t.created_at)
+                   FROM attendances t JOIN associations ta ON ta.id = t.association_id WHERE t.event_id = e.id), '[]') AS attendances,
+         (SELECT count(*)::int FROM comments cm WHERE cm.event_id = e.id AND cm.deleted_at IS NULL) AS comment_count
+  FROM events e
+  JOIN associations a ON a.id = e.association_id
+  LEFT JOIN venues v ON v.id = e.venue_id
+  LEFT JOIN categories c ON c.id = e.category_id
+  LEFT JOIN events r ON r.id = e.rescheduled_from`;
+
+// Ce que chacun a le droit de voir (cahier des charges §3 et §6)
+function visibility(user, params) {
+  const PUBLIC = `(e.visibility = 'public' AND e.status <> 'option' AND e.type <> 'internal')`;
+  const assoId = memberAssoId(user);
+  if (!assoId) {
+    if (user?.is_admin) return `(e.visibility IN ('public','associations'))`;
+    return PUBLIC;
+  }
+  params.push(assoId);
+  const p = `$${params.length}`;
+  return `(e.visibility IN ('public','associations') OR EXISTS (SELECT 1 FROM event_orgs x WHERE x.event_id = e.id AND x.association_id = ${p}))`;
+}
+
+async function canEdit(user, eventId) {
+  if (!user) return false;
+  if (user.is_admin) return true;
+  const assoId = memberAssoId(user);
+  if (!assoId) return false;
+  return !!(await one('SELECT 1 FROM event_orgs WHERE event_id = $1 AND association_id = $2', [eventId, assoId]));
+}
+
+app.get('/api/events', wrap(async (req, res) => {
+  const params = [];
+  const where = ['e.deleted_at IS NULL', 'a.status = \'approved\'', visibility(req.user, params)];
+  if (req.query.from) { params.push(new Date(req.query.from)); where.push(`COALESCE(e.ends_at, e.starts_at) >= $${params.length}`); }
+  if (req.query.to) { params.push(new Date(req.query.to)); where.push(`e.starts_at < $${params.length}`); }
+  if (req.query.asso) { params.push(Number(req.query.asso)); where.push(`EXISTS (SELECT 1 FROM event_orgs y WHERE y.event_id = e.id AND y.association_id = $${params.length})`); }
+  const order = req.query.order === 'desc' ? 'DESC' : 'ASC';
+  const limit = Math.min(Number(req.query.limit) || 2000, 2000);
+  const rows = await all(`${EVENT_SELECT} WHERE ${where.join(' AND ')} ORDER BY e.starts_at ${order} LIMIT ${limit}`, params);
+  res.json({ events: rows.map(slimEvent) });
+}));
+
+function slimEvent(e) {
+  const { created_by, ...rest } = e;
+  return rest;
+}
+
+async function loadEvent(id, user) {
+  const params = [Number(id)];
+  const e = await one(`${EVENT_SELECT} WHERE e.id = $1 AND e.deleted_at IS NULL AND ${visibility(user, params)}`, params);
+  return e;
+}
+
+app.get('/api/events/:id', wrap(async (req, res) => {
+  const e = await loadEvent(req.params.id, req.user);
+  if (!e) fail(404, 'Événement introuvable ou non visible.');
+  const member = !!memberAssoId(req.user) || req.user?.is_admin;
+  const comments = member ? await all(`SELECT cm.id, cm.body, cm.created_at, cm.user_id, cm.author_name, a.name AS asso_name, a.color AS asso_color, a.slug AS asso_slug
+      FROM comments cm LEFT JOIN associations a ON a.id = cm.association_id WHERE cm.event_id = $1 AND cm.deleted_at IS NULL ORDER BY cm.created_at`, [e.id]) : [];
+  const editable = await canEdit(req.user, e.id);
+  const history = editable ? await all(`SELECT id, action, user_name, association_name, created_at, (before IS NOT NULL) AS revertible FROM history WHERE entity = 'event' AND entity_id = $1 ORDER BY created_at DESC LIMIT 50`, [e.id]) : [];
+  const rescheduledTo = await one(`SELECT id, starts_at FROM events WHERE rescheduled_from = $1 AND deleted_at IS NULL`, [e.id]);
+  res.json({ event: slimEvent(e), comments, history, can_edit: editable, can_interact: member, rescheduled_to: rescheduledTo });
+}));
+
+async function eventInput(b, user, existing = null) {
+  const title = str(b.title, 160);
+  const starts = new Date(b.starts_at);
+  const ends = b.ends_at ? new Date(b.ends_at) : null;
+  if (!title) fail(400, 'Le titre est obligatoire.');
+  if (Number.isNaN(starts.getTime())) fail(400, 'La date et l’heure sont obligatoires.');
+  if (ends && (Number.isNaN(ends.getTime()) || ends < starts)) fail(400, 'L’heure de fin doit venir après le début.');
+  const venueId = Number(b.venue_id);
+  if (!venueId || !(await one('SELECT 1 FROM venues WHERE id = $1', [venueId]))) fail(400, 'Le lieu est obligatoire.');
+  const catId = Number(b.category_id);
+  if (!catId || !(await one('SELECT 1 FROM categories WHERE id = $1', [catId]))) fail(400, 'La catégorie est obligatoire.');
+  const type = ['public', 'internal', 'inter', 'ag'].includes(b.type) ? b.type : 'public';
+  const status = ['option', 'en_cours', 'valide', 'annule'].includes(b.status) ? b.status : 'option';
+  let vis = ['public', 'associations', 'private'].includes(b.visibility) ? b.visibility : 'associations';
+  if (type === 'internal' && vis === 'public') vis = 'associations';
+  let imageId = existing ? existing.image_id : null;
+  if (b.image === null) imageId = null;
+  else if (typeof b.image === 'string' && b.image.startsWith('data:')) imageId = await saveImage(b.image);
+  else if (!existing && typeof b.image_id_copy === 'string' && await one('SELECT 1 FROM images WHERE id = $1', [b.image_id_copy])) imageId = b.image_id_copy;
+  const coorgs = Array.isArray(b.coorgs) ? [...new Set(b.coorgs.map(Number).filter(Boolean))].slice(0, 20) : null;
+  return {
+    title, starts_at: starts, ends_at: ends, venue_id: venueId, category_id: catId, type, status, visibility: vis,
+    description: str(b.description, 5000), image_id: imageId, link: safeUrl(b.link), price: str(b.price, 120), coorgs,
+  };
+}
+
+async function snapshot(db, id) {
+  const e = (await db.query('SELECT * FROM events WHERE id = $1', [id])).rows[0];
+  if (!e) return null;
+  const orgs = (await db.query('SELECT association_id FROM event_orgs WHERE event_id = $1 ORDER BY association_id', [id])).rows.map((r) => r.association_id);
+  return { ...e, orgs };
+}
+
+async function setOrgs(db, eventId, ownerId, coorgs) {
+  const ids = new Set([ownerId, ...(coorgs || [])]);
+  const valid = (await db.query(`SELECT id FROM associations WHERE status = 'approved' AND id = ANY($1::int[])`, [[...ids]])).rows.map((r) => r.id);
+  await db.query('DELETE FROM event_orgs WHERE event_id = $1', [eventId]);
+  for (const aid of new Set([ownerId, ...valid])) await db.query('INSERT INTO event_orgs (event_id, association_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [eventId, aid]);
+}
+
+app.post('/api/events', wrap(async (req, res) => {
+  const u = requireMember(req);
+  const v = await eventInput(req.body, u);
+  const id = await tx(async (db) => {
+    const e = (await db.query(
+      `INSERT INTO events (association_id, title, starts_at, ends_at, venue_id, category_id, type, status, visibility, description, image_id, link, price, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+      [u.association_id, v.title, v.starts_at, v.ends_at, v.venue_id, v.category_id, v.type, v.status, v.visibility, v.description, v.image_id, v.link, v.price, u.id])).rows[0];
+    await setOrgs(db, e.id, u.association_id, v.coorgs);
+    await logHistory(db, { entity: 'event', entityId: e.id, action: 'création', user: u, after: await snapshot(db, e.id) });
+    return e.id;
+  });
+  res.json({ id });
+}));
+
+app.put('/api/events/:id', wrap(async (req, res) => {
+  const u = requireUser(req);
+  const id = Number(req.params.id);
+  if (!(await canEdit(u, id))) fail(403, 'Seules les associations organisatrices peuvent modifier cette date.');
+  const existing = await one('SELECT * FROM events WHERE id = $1 AND deleted_at IS NULL', [id]);
+  if (!existing) fail(404, 'Événement introuvable.');
+  const v = await eventInput(req.body, u, existing);
+  await tx(async (db) => {
+    const before = await snapshot(db, id);
+    await db.query(
+      `UPDATE events SET title=$1, starts_at=$2, ends_at=$3, venue_id=$4, category_id=$5, type=$6, status=$7, visibility=$8, description=$9, image_id=$10, link=$11, price=$12, updated_at=now() WHERE id=$13`,
+      [v.title, v.starts_at, v.ends_at, v.venue_id, v.category_id, v.type, v.status, v.visibility, v.description, v.image_id, v.link, v.price, id]);
+    if (v.coorgs) await setOrgs(db, id, existing.association_id, v.coorgs);
+    await logHistory(db, { entity: 'event', entityId: id, action: 'modification', user: u, before, after: await snapshot(db, id) });
+  });
+  res.json({ id });
+}));
+
+app.post('/api/events/:id/cancel', wrap(async (req, res) => {
+  const u = requireUser(req);
+  const id = Number(req.params.id);
+  if (!(await canEdit(u, id))) fail(403, 'Action non autorisée.');
+  await tx(async (db) => {
+    const before = await snapshot(db, id);
+    if (!before || before.deleted_at) fail(404, 'Événement introuvable.');
+    await db.query(`UPDATE events SET status = 'annule', updated_at = now() WHERE id = $1`, [id]);
+    await logHistory(db, { entity: 'event', entityId: id, action: 'annulation', user: u, before, after: await snapshot(db, id) });
+  });
+  res.json({ ok: true });
+}));
+
+// Report : la date d'origine est annulée, une nouvelle date « reportée du … » est créée
+app.post('/api/events/:id/reschedule', wrap(async (req, res) => {
+  const u = requireUser(req);
+  const id = Number(req.params.id);
+  if (!(await canEdit(u, id))) fail(403, 'Action non autorisée.');
+  const starts = new Date(req.body.starts_at);
+  const ends = req.body.ends_at ? new Date(req.body.ends_at) : null;
+  if (Number.isNaN(starts.getTime())) fail(400, 'Indiquez la nouvelle date.');
+  if (ends && (Number.isNaN(ends.getTime()) || ends < starts)) fail(400, 'L’heure de fin doit venir après le début.');
+  const newId = await tx(async (db) => {
+    const before = await snapshot(db, id);
+    if (!before || before.deleted_at) fail(404, 'Événement introuvable.');
+    const status = before.status === 'annule' ? 'en_cours' : before.status;
+    const n = (await db.query(
+      `INSERT INTO events (association_id, title, starts_at, ends_at, venue_id, category_id, type, status, visibility, description, image_id, link, price, rescheduled_from, created_by)
+       SELECT association_id, title, $2, $3, venue_id, category_id, type, $4, visibility, description, image_id, link, price, id, $5 FROM events WHERE id = $1 RETURNING id`,
+      [id, starts, ends, status, u.id])).rows[0];
+    await db.query('INSERT INTO event_orgs (event_id, association_id) SELECT $2, association_id FROM event_orgs WHERE event_id = $1', [id, n.id]);
+    await db.query(`UPDATE events SET status = 'annule', updated_at = now() WHERE id = $1`, [id]);
+    await logHistory(db, { entity: 'event', entityId: id, action: 'report', user: u, before, after: await snapshot(db, id) });
+    await logHistory(db, { entity: 'event', entityId: n.id, action: 'création (report)', user: u, after: await snapshot(db, n.id) });
+    return n.id;
+  });
+  res.json({ id: newId });
+}));
+
+app.delete('/api/events/:id', wrap(async (req, res) => {
+  const u = requireUser(req);
+  const id = Number(req.params.id);
+  if (!(await canEdit(u, id))) fail(403, 'Action non autorisée.');
+  await tx(async (db) => {
+    const before = await snapshot(db, id);
+    if (!before || before.deleted_at) fail(404, 'Événement introuvable.');
+    await db.query('UPDATE events SET deleted_at = now(), updated_at = now() WHERE id = $1', [id]);
+    await logHistory(db, { entity: 'event', entityId: id, action: 'suppression', user: u, before, after: await snapshot(db, id) });
+  });
+  res.json({ ok: true });
+}));
+
+app.post('/api/events/:id/attendance', wrap(async (req, res) => {
+  const u = requireMember(req);
+  const e = await loadEvent(req.params.id, u);
+  if (!e) fail(404, 'Événement introuvable.');
+  const kind = req.body.kind;
+  if (kind === 'going' || kind === 'interested') {
+    await q(`INSERT INTO attendances (event_id, association_id, kind) VALUES ($1,$2,$3) ON CONFLICT (event_id, association_id) DO UPDATE SET kind = EXCLUDED.kind`, [e.id, u.association_id, kind]);
+  } else {
+    await q('DELETE FROM attendances WHERE event_id = $1 AND association_id = $2', [e.id, u.association_id]);
+  }
+  res.json({ ok: true });
+}));
+
+app.post('/api/events/:id/comments', wrap(async (req, res) => {
+  const u = requireMember(req);
+  const e = await loadEvent(req.params.id, u);
+  if (!e) fail(404, 'Événement introuvable.');
+  const body = str(req.body.body, 2000);
+  if (!body) fail(400, 'Le commentaire est vide.');
+  if (limited(`cm:${u.id}`, 60, 60 * 60e3)) fail(429, 'Trop de commentaires d’un coup.');
+  const c = await one('INSERT INTO comments (event_id, user_id, author_name, association_id, body) VALUES ($1,$2,$3,$4,$5) RETURNING id',
+    [e.id, u.id, u.name || u.email.split('@')[0], u.association_id, body]);
+  res.json({ id: c.id });
+}));
+
+app.delete('/api/comments/:id', wrap(async (req, res) => {
+  const u = requireUser(req);
+  const c = await one('SELECT * FROM comments WHERE id = $1', [Number(req.params.id)]);
+  if (!c) fail(404, 'Commentaire introuvable.');
+  if (c.user_id !== u.id && !u.is_admin) fail(403, 'Vous ne pouvez supprimer que vos commentaires.');
+  await q('UPDATE comments SET deleted_at = now() WHERE id = $1', [c.id]);
+  res.json({ ok: true });
+}));
+
+// Revenir à une version précédente (historique)
+app.post('/api/history/:id/revert', wrap(async (req, res) => {
+  const u = requireUser(req);
+  const h = await one('SELECT * FROM history WHERE id = $1', [Number(req.params.id)]);
+  if (!h || !h.before) fail(404, 'Rien à restaurer pour cette entrée.');
+  const b = typeof h.before === 'string' ? JSON.parse(h.before) : h.before;
+  if (h.entity === 'event') {
+    if (!(await canEdit(u, h.entity_id))) fail(403, 'Action non autorisée.');
+    await tx(async (db) => {
+      const cur = await snapshot(db, h.entity_id);
+      await db.query(
+        `UPDATE events SET title=$1, starts_at=$2, ends_at=$3, venue_id=$4, category_id=$5, type=$6, status=$7, visibility=$8, description=$9, image_id=$10, link=$11, price=$12, deleted_at=$13, updated_at=now() WHERE id=$14`,
+        [b.title, b.starts_at, b.ends_at, b.venue_id, b.category_id, b.type, b.status, b.visibility, b.description, b.image_id, b.link, b.price, b.deleted_at, h.entity_id]);
+      if (Array.isArray(b.orgs)) {
+        await db.query('DELETE FROM event_orgs WHERE event_id = $1', [h.entity_id]);
+        for (const aid of b.orgs) await db.query('INSERT INTO event_orgs (event_id, association_id) SELECT $1, id FROM associations WHERE id = $2 ON CONFLICT DO NOTHING', [h.entity_id, aid]);
+      }
+      await logHistory(db, { entity: 'event', entityId: h.entity_id, action: 'retour en arrière', user: u, before: cur, after: await snapshot(db, h.entity_id) });
+    });
+  } else if (h.entity === 'association') {
+    if (u.association_id !== h.entity_id && !u.is_admin) fail(403, 'Action non autorisée.');
+    const cur = await one('SELECT * FROM associations WHERE id = $1', [h.entity_id]);
+    await q('UPDATE associations SET name=$1, slug=$2, color=$3, logo_id=$4, description=$5, contact_email=$6, phone=$7, website=$8, commune=$9, socials=$10 WHERE id=$11',
+      [b.name, b.slug, b.color, b.logo_id, b.description, b.contact_email, b.phone, b.website, b.commune, JSON.stringify(b.socials || {}), h.entity_id]);
+    await logHistory({ query: q }, { entity: 'association', entityId: h.entity_id, action: 'retour en arrière', user: u, before: cur, after: await one('SELECT * FROM associations WHERE id = $1', [h.entity_id]) });
+  } else if (h.entity === 'venue') {
+    requireAdmin(req);
+    await q('UPDATE venues SET name=$1, address=$2, city=$3, citycode=$4, district=$5, lat=$6, lng=$7, archived=$8 WHERE id=$9',
+      [b.name, b.address, b.city, b.citycode, b.district || '', b.lat, b.lng, b.archived, h.entity_id]);
+  } else fail(400, 'Type non pris en charge.');
+  res.json({ ok: true });
+}));
+
+// ---------- administration ----------
+app.get('/api/admin/overview', wrap(async (req, res) => {
+  requireAdmin(req);
+  const pending = await all(`SELECT ${ASSO_FIELDS}, (SELECT json_agg(json_build_object('name', u.name, 'email', u.email)) FROM users u WHERE u.association_id = a.id) AS people
+    FROM associations a WHERE a.status = 'pending' ORDER BY a.created_at`);
+  const associations = await all(`SELECT ${ASSO_FIELDS}, (SELECT count(*)::int FROM users u WHERE u.association_id = a.id) AS member_count FROM associations a ORDER BY lower(a.name)`);
+  const admins = await all('SELECT u.id, u.name, u.email, a.name AS asso_name FROM users u LEFT JOIN associations a ON a.id = u.association_id WHERE u.is_admin ORDER BY u.id');
+  const history = await all(`SELECT h.id, h.entity, h.entity_id, h.action, h.user_name, h.association_name, h.created_at, (h.before IS NOT NULL) AS revertible,
+      COALESCE(h.after->>'title', h.before->>'title', h.after->>'name', h.before->>'name') AS label
+    FROM history h ORDER BY h.created_at DESC LIMIT 150`);
+  res.json({ pending, associations, admins, history, env_admins: ADMIN_EMAILS });
+}));
+
+app.post('/api/admin/associations/:id/:decision', wrap(async (req, res) => {
+  const u = requireAdmin(req);
+  const id = Number(req.params.id);
+  const decision = req.params.decision;
+  if (!['approve', 'reject', 'pending'].includes(decision)) fail(400, 'Décision inconnue.');
+  const status = { approve: 'approved', reject: 'rejected', pending: 'pending' }[decision];
+  const before = await one('SELECT * FROM associations WHERE id = $1', [id]);
+  if (!before) fail(404, 'Association introuvable.');
+  const after = await one(`UPDATE associations SET status = $1, approved_at = CASE WHEN $1 = 'approved' THEN now() ELSE approved_at END WHERE id = $2 RETURNING *`, [status, id]);
+  await logHistory({ query: q }, { entity: 'association', entityId: id, action: { approved: 'validation', rejected: 'refus', pending: 'remise en attente' }[status], user: u, before, after });
+  if (status === 'approved' && before.status !== 'approved') {
+    const people = await all('SELECT email FROM users WHERE association_id = $1', [id]);
+    for (const p of people) await approvedMail(p.email, after.name, baseUrl(req));
+  }
+  res.json({ association: after });
+}));
+
+app.post('/api/admin/admins', wrap(async (req, res) => {
+  requireAdmin(req);
+  const email = normEmail(req.body.email);
+  if (!isEmail(email)) fail(400, 'Adresse invalide.');
+  const target = await one('SELECT id FROM users WHERE email = $1', [email]);
+  if (!target) fail(404, 'Cette personne doit d’abord avoir un compte Lanterne.');
+  await q('UPDATE users SET is_admin = true WHERE id = $1', [target.id]);
+  res.json({ ok: true });
+}));
+
+app.delete('/api/admin/admins/:id', wrap(async (req, res) => {
+  const u = requireAdmin(req);
+  const id = Number(req.params.id);
+  const target = await one('SELECT email FROM users WHERE id = $1', [id]);
+  if (!target) fail(404, 'Compte introuvable.');
+  if (ADMIN_EMAILS.includes(target.email)) fail(400, 'Cet administrateur est défini dans la configuration du serveur.');
+  const count = await one('SELECT count(*)::int AS n FROM users WHERE is_admin');
+  if (count.n <= 1) fail(400, 'Il faut garder au moins un administrateur.');
+  await q('UPDATE users SET is_admin = false WHERE id = $1', [id]);
+  if (id === u.id) { /* l'admin s'est retiré lui-même */ }
+  res.json({ ok: true });
+}));
+
+app.delete('/api/admin/members/:id', wrap(async (req, res) => {
+  requireAdmin(req);
+  await q('UPDATE users SET association_id = NULL WHERE id = $1', [Number(req.params.id)]);
+  res.json({ ok: true });
+}));
+
+// ---------- agendas .ics ----------
+async function feedEvents(user, query) {
+  const params = [];
+  const where = ['e.deleted_at IS NULL', `a.status = 'approved'`, visibility(user, params), `e.starts_at > now() - interval '90 days'`];
+  if (query.asso) { params.push(String(query.asso)); where.push(`EXISTS (SELECT 1 FROM event_orgs y JOIN associations ya ON ya.id = y.association_id WHERE y.event_id = e.id AND ya.slug = $${params.length})`); }
+  if (query.cat) { params.push(Number(query.cat)); where.push(`e.category_id = $${params.length}`); }
+  if (query.mine === '1' && memberAssoId(user)) {
+    params.push(memberAssoId(user));
+    where.push(`(EXISTS (SELECT 1 FROM event_orgs z WHERE z.event_id = e.id AND z.association_id = $${params.length}) OR EXISTS (SELECT 1 FROM attendances t WHERE t.event_id = e.id AND t.association_id = $${params.length}))`);
+  }
+  const rows = await all(`${EVENT_SELECT} WHERE ${where.join(' AND ')} ORDER BY e.starts_at LIMIT 3000`, params);
+  return rows.map((e) => ({ ...e, orgs: (typeof e.orgs === 'string' ? JSON.parse(e.orgs) : e.orgs).map((o) => o.name).join(', ') }));
+}
+
+function sendIcs(res, body, filename) {
+  res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+  res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+  res.setHeader('Cache-Control', 'no-cache');
+  res.send(body);
+}
+
+app.get('/ics/public.ics', wrap(async (req, res) => {
+  const events = await feedEvents(null, req.query);
+  sendIcs(res, buildCalendar(events, { name: 'Lanterne · Sainté', baseUrl: baseUrl(req) }), 'lanterne.ics');
+}));
+
+app.get('/ics/u/:token.ics', wrap(async (req, res) => {
+  const u = await one(`SELECT u.*, a.status AS asso_status, a.name AS asso_name FROM users u LEFT JOIN associations a ON a.id = u.association_id WHERE u.ics_token = $1`, [req.params.token]);
+  if (!u) return res.status(404).send('Lien d’abonnement inconnu.');
+  const events = await feedEvents(u, req.query);
+  sendIcs(res, buildCalendar(events, { name: req.query.mine === '1' && u.asso_name ? `Lanterne · ${u.asso_name}` : 'Lanterne', baseUrl: baseUrl(req) }), 'lanterne.ics');
+}));
+
+app.get('/ics/event/:id.ics', wrap(async (req, res) => {
+  const e = await loadEvent(req.params.id, req.user);
+  if (!e) return res.status(404).send('Événement introuvable.');
+  const orgs = (typeof e.orgs === 'string' ? JSON.parse(e.orgs) : e.orgs).map((o) => o.name).join(', ');
+  res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="lanterne-${e.id}.ics"`);
+  res.send(buildCalendar([{ ...e, orgs }], { name: e.title, baseUrl: baseUrl(req) }));
+}));
+
+// ---------- fichiers statiques ----------
+const nm = (p) => path.join(root, 'node_modules', p);
+app.use('/vendor/maplibre', express.static(nm('maplibre-gl/dist'), { maxAge: '30d' }));
+app.use('/vendor/fonts/orbitron', express.static(nm('@fontsource/orbitron/files'), { maxAge: '365d' }));
+app.use('/vendor/fonts/work-sans', express.static(nm('@fontsource/work-sans/files'), { maxAge: '365d' }));
+app.use('/vendor/fonts/plex-mono', express.static(nm('@fontsource/ibm-plex-mono/files'), { maxAge: '365d' }));
+app.use(express.static(path.join(root, 'public'), {
+  index: false,
+  setHeaders(res, p) {
+    // Code et styles toujours revalidés : les mises à jour arrivent tout de suite
+    if (/\.(js|css|html|webmanifest)$/.test(p)) res.setHeader('Cache-Control', 'no-cache');
+    else res.setHeader('Cache-Control', 'public, max-age=86400');
+  },
+}));
+
+// Application monopage, avec balises de partage pour les événements publics
+const indexHtml = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
+const escAttr = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+app.get('*', wrap(async (req, res) => {
+  if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Introuvable.' });
+  let html = indexHtml;
+  const m = /^\/evenement\/(\d+)/.exec(req.path);
+  if (m) {
+    const e = await loadEvent(m[1], null);
+    if (e) {
+      const when = new Intl.DateTimeFormat('fr-FR', { timeZone: 'Europe/Paris', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }).format(new Date(e.starts_at));
+      const desc = `${when} · ${e.venue_name || ''}${e.venue_city ? `, ${e.venue_city}` : ''} — ${e.asso_name}`;
+      const base = baseUrl(req);
+      const meta = [
+        `<meta property="og:title" content="${escAttr(e.title)}">`,
+        `<meta property="og:description" content="${escAttr(desc)}">`,
+        `<meta property="og:url" content="${escAttr(`${base}/evenement/${e.id}`)}">`,
+        `<meta property="og:image" content="${escAttr(e.image_id ? `${base}/img/${e.image_id}` : `${base}/icons/og.png`)}">`,
+        '<meta name="twitter:card" content="summary_large_image">',
+      ].join('\n');
+      html = html.replace('<!--og-->', meta).replace(/<title>[^<]*<\/title>/, `<title>${escAttr(e.title)} · Lanterne</title>`);
+    }
+  }
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.send(html);
+}));
+
+// ---------- erreurs ----------
+app.use((err, req, res, _next) => {
+  const status = err.status || (err.type === 'entity.too.large' ? 413 : 500);
+  if (status >= 500) console.error(err);
+  const message = status === 413 ? 'Fichier trop lourd.' : status >= 500 ? 'Erreur du serveur. Réessayez.' : err.message;
+  res.status(status).json({ error: message });
+});
+
+// Nettoyage périodique des jetons expirés
+setInterval(() => {
+  q(`DELETE FROM login_tokens WHERE expires_at < now() - interval '1 day'`).catch(() => {});
+  q(`DELETE FROM sessions WHERE expires_at < now()`).catch(() => {});
+}, 6 * 3600e3).unref();
+
+await initDb();
+const server = app.listen(PORT, () => console.log(`[lanterne] prêt sur http://localhost:${PORT}`));
+
+// Arrêt propre (redéploiement Railway, Ctrl-C) : on termine les requêtes puis on ferme la base
+for (const sig of ['SIGTERM', 'SIGINT']) {
+  process.once(sig, () => {
+    console.log(`[lanterne] arrêt (${sig})`);
+    let done = false;
+    const finish = async () => { if (done) return; done = true; try { await closeDb(); } finally { process.exit(0); } };
+    server.close(finish);
+    server.closeIdleConnections();
+    setTimeout(() => { server.closeAllConnections(); finish(); }, 3000).unref();
+  });
+}

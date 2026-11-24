@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="fr" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Lanterne · l'agenda commun des associations stéphanoises</title>
+<meta name="description" content="Lanterne, l'agenda commun des associations de Saint-Étienne Métropole : voir les dates de chacun, repérer les soirs chargés, se coordonner.">
+<meta name="theme-color" content="#07080d">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icons/lanterne.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Lanterne">
+<!--og-->
+<script>
+  try { var t = localStorage.getItem('lanterne-theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div id="splash" aria-hidden="true">
+  <svg class="logo-mark splash-mark" viewBox="0 0 64 80"><use href="#lanterne-logo"/></svg>
+</div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="lanterne-logo" viewBox="0 0 64 80">
+      <g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">
+        <circle cx="32" cy="6" r="4"/>
+        <path d="M32 10 V14"/>
+        <path d="M18 22 L24 14 H40 L46 22 Z"/>
+        <path d="M14 22 H50"/>
+        <path d="M18 22 V62 M46 22 V62"/>
+        <path d="M26 22 V62 M38 22 V62" opacity=".45"/>
+        <path d="M14 62 H50"/>
+        <path d="M18 62 L24 70 H40 L46 62"/>
+        <path d="M22 76 H42"/>
+        <path d="M18 22 L46 62 M46 22 L18 62" opacity=".18"/>
+      </g>
+      <path class="flame" d="M32 30 C36.5 36 39 40 39 45 C39 49.5 35.8 53 32 53 C28.2 53 25 49.5 25 45 C25 41.5 27 39 29 36.5 C29.6 39.5 31 41 32.5 41.5 C31.6 37.8 31.4 34 32 30 Z" fill="currentColor"/>
+    </symbol>
+    <symbol id="lantern-mini" viewBox="0 0 12 16">
+      <path d="M4 1.2 H8 L9.6 3.4 H2.4 Z" fill="currentColor"/>
+      <rect x="2.4" y="4.2" width="7.2" height="8.6" rx="1.6" fill="currentColor"/>
+      <path d="M3.4 13.6 H8.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+    </symbol>
+  </defs>
+</svg>
+<a class="skip" href="#main">Aller au contenu</a>
+<div id="app"></div>
+<div id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
