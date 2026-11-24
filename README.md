@@ -20,7 +20,7 @@ Version 1, conforme au cahier des charges du 24 novembre 2026.
 | Archives, « l'an dernier à la même période » | Liste → Archives, bouton « L'an dernier » |
 | Accueil = calendrier du mois, vues Mois / Liste / Carte | `public/views-agenda.js` |
 | Filtres dans un seul panneau (association, catégorie, commune/quartier, statut, type) | bouton « Filtres » |
-| Appui long sur un jour, bouton « + » toujours visible | calendrier |
+| Saisie rapide : un toucher sur un jour ouvre « Créer un événement ce jour-là ? » (OK / Annuler, avec les dates déjà posées ce jour-là) — remplace l'appui long, à la demande de Quentin ; bouton « + » toujours visible | calendrier |
 | « On y va » / intéressé, commentaires, co-organisation | fiche événement |
 | Profils d'association et annuaire | `/associations` |
 | Historique de qui a modifié quoi, retour en arrière | fiche événement, onglet Historique de l'admin |

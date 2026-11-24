@@ -114,7 +114,13 @@ export function openModal({ title, body, foot = '', onMount, wide = false }) {
   d.innerHTML = String(html`<div class="modal-head"><h2>${title}</h2><button class="icon-btn" data-close aria-label="Fermer">${icon('close')}</button></div>
     <div class="modal-body">${body}</div>${foot ? html`<div class="modal-foot">${foot}</div>` : ''}`);
   document.body.append(d);
-  const close = () => { d.close(); };
+  // Fermeture en douceur (la fenêtre redescend sur mobile, s'estompe sur ordinateur)
+  const close = () => {
+    if (d.classList.contains('closing') || !d.open) return;
+    d.classList.add('closing');
+    setTimeout(() => d.close(), window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 190);
+  };
+  d.addEventListener('cancel', (ev) => { ev.preventDefault(); close(); });
   d.addEventListener('close', () => d.remove());
   d.addEventListener('click', (ev) => { if (ev.target === d || ev.target.closest('[data-close]')) close(); });
   d.showModal();

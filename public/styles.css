@@ -636,3 +636,36 @@ dialog.modal::backdrop { background: rgba(0, 0, 0, .55); backdrop-filter: blur(3
 .update-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
 .update-text b { font-weight: 500; font-size: .95rem; }
 .update-text span { font-size: .8rem; color: var(--text-2); }
+
+/* ---------- fenêtres : apparition douce, feuille du bas sur mobile ---------- */
+dialog.modal[open] { animation: modalin .26s var(--ease) both; }
+dialog.modal[open]::backdrop { animation: backin .26s ease both; }
+dialog.modal.closing { animation: modalout .19s ease both; }
+dialog.modal.closing::backdrop { animation: backout .19s ease both; }
+@keyframes modalin { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes modalout { to { opacity: 0; transform: translateY(8px) scale(.98); } }
+@keyframes backin { from { opacity: 0; } to { opacity: 1; } }
+@keyframes backout { to { opacity: 0; } }
+@media (max-width: 560px) {
+  dialog.modal[open] { animation: sheetin .34s cubic-bezier(.2, .9, .25, 1) both; }
+  dialog.modal.closing { animation: sheetout .2s ease-in both; }
+  dialog.modal::before { /* poignée de la feuille */
+    content: ''; display: block; width: 40px; height: 4px; border-radius: 4px; margin: 8px auto -4px; background: var(--line);
+  }
+  .modal-foot { padding-bottom: calc(14px + env(safe-area-inset-bottom)); }
+  .modal-foot .btn { flex: 1; min-height: 50px; font-size: 1rem; }
+}
+@keyframes sheetin { from { transform: translateY(100%); } to { transform: none; } }
+@keyframes sheetout { to { transform: translateY(100%); } }
+
+/* Fenêtre « Créer un événement ce jour-là ? » */
+.ask-create { display: grid; gap: 12px; }
+.ask-busy, .ask-free { display: flex; align-items: center; gap: 8px; margin: 0; font-size: .92rem; color: var(--text-2); }
+.ask-busy svg { width: 18px; height: 18px; color: var(--accent-text); }
+.ask-busy.hot { color: var(--text); }
+.ask-busy.hot svg { filter: drop-shadow(0 0 6px var(--glow)); }
+.ask-free .lantern { width: 14px; height: 19px; }
+.ask-list .ev { padding: 10px 12px 10px 14px; }
+.ask-list .ev-badges { display: none; }
+.ask-question { margin: 4px 0 0; font-size: 1.08rem; font-weight: 500; color: var(--text); }
+.nowrap { white-space: nowrap; }

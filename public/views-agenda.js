@@ -63,7 +63,7 @@ export async function monthView() {
         <span>${lantern('var(--accent)', 'annule')} annulée</span>
         <span>Plus un jour brille, plus il est chargé
           <span class="glow-scale" aria-hidden="true">${[0, 1, 2, 3, 4].map((g) => html`<i class="day" style="--g:${g};min-height:0;padding:0"></i>`)}</span></span>
-        ${isMember() ? html`<span class="kbd-hint">Appui long sur un jour pour y créer une date</span>` : ''}
+        ${isMember() ? html`<span class="kbd-hint">Touchez un jour pour y créer une date</span>` : ''}
       </div></div>
       <aside class="day-panel card" aria-live="polite"></aside>
     </div>`);
@@ -112,26 +112,37 @@ export async function monthView() {
   const sel = p.get('jour') && days.includes(p.get('jour')) ? p.get('jour') : (today.slice(0, 7) === month ? today : first);
   showDay(sel);
 
-  // Appui long : ouvre le formulaire avec la date déjà remplie
-  let timer = null; let longFired = false; let start = null;
-  const cancelPress = () => { clearTimeout(timer); timer = null; $$('.day.pressing').forEach((d) => d.classList.remove('pressing')); };
-  $$('.day').forEach((el) => {
-    el.addEventListener('pointerdown', (ev) => {
-      if (ev.button !== 0) return;
-      longFired = false; start = { x: ev.clientX, y: ev.clientY };
-      el.classList.add('pressing');
-      timer = setTimeout(() => {
-        longFired = true; el.classList.remove('pressing');
-        if (navigator.vibrate) navigator.vibrate(15);
-        if (isMember()) navigate(`/nouveau?date=${el.dataset.day}`); else requireLoginToast();
-      }, 550);
+  // Un toucher sur un jour : une fenêtre propose de créer un événement ce jour-là
+  const askCreate = (k) => {
+    const list = (byDay.get(k) || []).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
+    const active = list.filter((e) => e.status !== 'annule').length;
+    const title = keyLabel(k);
+    openModal({
+      title: title.charAt(0).toUpperCase() + title.slice(1),
+      body: html`<div class="ask-create">
+        ${list.length ? html`
+          <p class="ask-busy ${active >= 2 ? 'hot' : ''}">${icon('calendar')}${active ? `Déjà ${active} date${active > 1 ? 's' : ''} ce jour-là` : 'Une date annulée ce jour-là'}</p>
+          <div class="list-events ask-list">${list.slice(0, 3).map((e) => eventCard(e))}</div>
+          ${list.length > 3 ? html`<p class="small faint">et ${list.length - 3} autre${list.length > 4 ? 's' : ''}…</p>` : ''}`
+        : html`<p class="ask-free">${lantern('var(--accent)')}La place est libre ce jour-là.</p>`}
+        <p class="ask-question">Veux-tu créer un événement <span class="nowrap">ce jour-là&nbsp;?</span></p>
+      </div>`,
+      foot: html`<button class="btn ghost" data-close>Annuler</button><button class="btn primary" data-ok>${icon('plus')}OK, créer</button>`,
+      onMount(d, close) {
+        const ok = d.querySelector('[data-ok]');
+        ok.focus();
+        ok.addEventListener('click', () => { close(); navigate(`/nouveau?date=${k}`); });
+      },
     });
-    el.addEventListener('pointermove', (ev) => { if (timer && start && Math.hypot(ev.clientX - start.x, ev.clientY - start.y) > 10) cancelPress(); });
-    ['pointerup', 'pointerleave', 'pointercancel'].forEach((t) => el.addEventListener(t, cancelPress));
-    el.addEventListener('contextmenu', (ev) => ev.preventDefault());
-    el.addEventListener('click', (ev) => {
-      if (longFired) { ev.preventDefault(); return; }
+  };
+  $$('.day').forEach((el) => {
+    el.addEventListener('click', () => {
       const k = el.dataset.day;
+      if (isMember()) {
+        if (k.slice(0, 7) === month) showDay(k);
+        askCreate(k);
+        return;
+      }
       if (k.slice(0, 7) !== month) { navigate(`/?mois=${k.slice(0, 7)}&jour=${k}`, { replace: true }); return; }
       showDay(k);
       if (window.matchMedia('(max-width: 1020px)').matches) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
