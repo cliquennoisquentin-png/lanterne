@@ -153,7 +153,8 @@ app.post('/api/auth/request', wrap(async (req, res) => {
   if (user || ADMIN_EMAILS.includes(email)) {
     const t = token();
     await q(`INSERT INTO login_tokens (token_hash, email, expires_at) VALUES ($1, $2, now() + interval '30 minutes')`, [sha(t), email]);
-    await loginMail(email, `${base}/auth/verify?token=${t}`);
+    const sent = await loginMail(email, `${base}/auth/verify?token=${t}`);
+    if (!sent.ok) fail(502, 'Le mail de connexion n’a pas pu partir. Réessayez dans un instant ; si ça continue, prévenez un administrateur.');
   } else {
     await sendMail({
       to: email,
@@ -889,6 +890,7 @@ await initDb();
 const server = app.listen(PORT, () => {
   console.log(`[lanterne] prêt sur http://localhost:${PORT} · version ${VERSION}`);
   console.log(`[mail] ${describeMailSetup()}`);
+  console.log(`[lanterne] adresse publique des liens : ${process.env.PUBLIC_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : 'adresse de la requête')}`);
 });
 
 // Arrêt propre (redéploiement Railway, Ctrl-C) : on termine les requêtes puis on ferme la base
