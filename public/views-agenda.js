@@ -18,7 +18,7 @@ function viewSwitch(current) {
     <a href="/carte" ${current === 'map' ? raw('aria-current="page"') : ''}>${icon('map')}<span>Carte</span></a>
   </nav>`;
 }
-const filterBtn = () => html`<button class="btn ${filtersActive() ? 'on' : ''}" data-filters>${icon('filter')}Filtres${filtersActive() ? html`<span class="pill-count">${filtersActive()}</span>` : ''}</button>`;
+const filterBtn = () => html`<button class="btn ${filtersActive() ? 'on' : ''}" data-filters aria-label="Filtres">${icon('filter')}<span class="hide-sm">Filtres</span>${filtersActive() ? html`<span class="pill-count">${filtersActive()}</span>` : ''}</button>`;
 function bindCommon(root) {
   $('[data-filters]', root)?.addEventListener('click', () => window.lanterne.openFilters());
   $('[data-subscribe]', root)?.addEventListener('click', () => openSubscribe());
@@ -51,7 +51,7 @@ export async function monthView() {
       <h1 class="cal-month" aria-live="polite">${monthLabel(month)}</h1>
       <button class="icon-btn" data-nav="1" aria-label="Mois suivant">${icon('chevR')}</button>
       ${month !== today.slice(0, 7) ? html`<a class="btn small" href="/">Aujourd’hui</a>` : ''}
-      <a class="btn small ghost" href="/?mois=${addMonths(month, -12)}" title="Voir le même mois l’an dernier">${icon('history')}L’an dernier</a>
+      <a class="btn small ghost" href="/?mois=${addMonths(month, -12)}" title="Voir le même mois l’an dernier" aria-label="Le même mois l’an dernier">${icon('history')}<span class="hide-sm">L’an dernier</span></a>
       <span class="spacer"></span>
       ${viewSwitch('month')}
       ${filterBtn()}
@@ -79,20 +79,24 @@ export async function monthView() {
   for (const e of events) for (const k of eventDays(e)) { if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(e); }
 
   const dows = ['lun', 'mar', 'mer', 'jeu', 'ven', 'sam', 'dim'];
-  const cells = days.map((k) => {
+  const cells = days.map((k, i) => {
     const list = (byDay.get(k) || []).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
     const active = list.filter((e) => e.status !== 'annule').length;
     const g = Math.min(active, 4) + (active >= 6 ? 1 : 0);
     const shown = list.slice(0, 8);
     const cls = ['day', k.slice(0, 7) !== month && 'out', k === today && 'today', k < today && 'past'].filter(Boolean).join(' ');
     const label = `${keyLabel(k)} : ${active ? `${active} date${active > 1 ? 's' : ''}` : 'aucune date'}`;
-    return html`<button class="${cls}" style="--g:${g}" data-day="${k}" role="gridcell" aria-label="${label}">
+    return html`<button class="${cls}" style="--g:${g};--i:${i}" data-day="${k}" role="gridcell" aria-label="${label}">
       <span class="num"><b>${Number(k.slice(8))}</b>${active ? html`<span class="count">${active}</span>` : ''}</span>
       <span class="lanterns">${shown.map((e) => lantern(e.asso_color, e.status === 'option' || e.status === 'annule' ? e.status : ''))}${list.length > 8 ? html`<span class="lantern-more">+${list.length - 8}</span>` : ''}</span>
       <span class="peek">${list.slice(0, 3).map((e) => html`<span class="${e.status === 'annule' ? 'annule' : ''}" style="--c:${e.asso_color}">${e.title}</span>`)}</span>
     </button>`;
   });
   $('.cal').innerHTML = String(html`${dows.map((d) => html`<div class="cal-dow" aria-hidden="true">${d}</div>`)}${cells}`);
+  // Les jours s'allument un à un (après l'ouverture si elle est en cours)
+  const lightUp = () => { const c = $('.cal'); if (c) { c.classList.remove('cal-enter'); void c.offsetWidth; c.classList.add('cal-enter'); } };
+  if (document.documentElement.classList.contains('splashing')) document.addEventListener('lanterne:reveal', lightUp, { once: true });
+  else lightUp();
 
   const panel = $('.day-panel');
   const showDay = (k) => {

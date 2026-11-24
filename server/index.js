@@ -1,12 +1,13 @@
 // Lanterne — serveur
 import express from 'express';
 import cookieParser from 'cookie-parser';
+import compression from 'compression';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { initDb, q, one, all, tx, closeDb } from './db.js';
-import { loginMail, inviteMail, adminNewAssoMail, approvedMail, sendMail } from './mail.js';
+import { loginMail, inviteMail, adminNewAssoMail, approvedMail, sendMail, describeMailSetup } from './mail.js';
 import { buildCalendar } from './ics.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -16,6 +17,8 @@ const PORT = Number(process.env.PORT || 3000);
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
 const SESSION_DAYS = 90;
 const COOKIE = 'lt_sid';
+// Numéro de version : change à chaque déploiement (sert au bouton « Mise à jour disponible »)
+const VERSION = (process.env.RAILWAY_DEPLOYMENT_ID || process.env.RAILWAY_GIT_COMMIT_SHA || '').slice(0, 12) || `dev-${Date.now().toString(36)}`;
 
 export const PALETTE = [
   { name: 'Ciel', hex: '#2B8FD9' }, { name: 'Cyan', hex: '#0095B0' }, { name: 'Turquoise', hex: '#00967F' },
@@ -58,6 +61,7 @@ function limited(key, max, windowMs) {
 const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
+app.use(compression()); // fichiers compressés : chargements plus rapides sur mobile
 app.use(express.json({ limit: '4mb' }));
 app.use(cookieParser());
 
@@ -130,10 +134,13 @@ function publicUser(u) {
   };
 }
 
+// ---------- version ----------
+app.get('/api/version', (req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json({ version: VERSION }); });
+
 // ---------- configuration ----------
 app.get('/api/config', wrap(async (req, res) => {
   const categories = await all('SELECT id, name, position, active FROM categories ORDER BY position, name');
-  res.json({ palette: PALETTE, categories, user: publicUser(req.user), contact: process.env.CONTACT_EMAIL || '' });
+  res.json({ palette: PALETTE, categories, user: publicUser(req.user), contact: process.env.CONTACT_EMAIL || '', version: VERSION });
 }));
 
 // ---------- authentification ----------
@@ -819,6 +826,13 @@ app.use('/vendor/maplibre', express.static(nm('maplibre-gl/dist'), { maxAge: '30
 app.use('/vendor/fonts/orbitron', express.static(nm('@fontsource/orbitron/files'), { maxAge: '365d' }));
 app.use('/vendor/fonts/work-sans', express.static(nm('@fontsource/work-sans/files'), { maxAge: '365d' }));
 app.use('/vendor/fonts/plex-mono', express.static(nm('@fontsource/ibm-plex-mono/files'), { maxAge: '365d' }));
+// Le service worker porte le numéro de version : chaque déploiement vide les anciens caches
+const swSource = fs.readFileSync(path.join(root, 'public', 'sw.js'), 'utf8').replace("'lanterne-v3'", `'lanterne-${VERSION}'`);
+app.get('/sw.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.send(swSource);
+});
 app.use(express.static(path.join(root, 'public'), {
   index: false,
   setHeaders(res, p) {
@@ -872,7 +886,10 @@ setInterval(() => {
 }, 6 * 3600e3).unref();
 
 await initDb();
-const server = app.listen(PORT, () => console.log(`[lanterne] prêt sur http://localhost:${PORT}`));
+const server = app.listen(PORT, () => {
+  console.log(`[lanterne] prêt sur http://localhost:${PORT} · version ${VERSION}`);
+  console.log(`[mail] ${describeMailSetup()}`);
+});
 
 // Arrêt propre (redéploiement Railway, Ctrl-C) : on termine les requêtes puis on ferme la base
 for (const sig of ['SIGTERM', 'SIGINT']) {

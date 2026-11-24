@@ -25,13 +25,37 @@ function parseFrom(from) {
   return m ? { name: m[1] || 'Lanterne', email: m[2] } : { name: 'Lanterne', email: from.trim() };
 }
 
+// La clé Brevo peut arriver sous plusieurs formes : on la nettoie, et on décode la clé
+// « connecteur » (base64 d'un JSON qui contient la vraie clé API) si c'est celle-ci qui a été collée.
+export function brevoKey() {
+  let k = String(process.env.BREVO_API_KEY || '').trim().replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, '');
+  if (k && !k.startsWith('xkeysib-') && !k.startsWith('xsmtpsib-')) {
+    try {
+      const j = JSON.parse(Buffer.from(k, 'base64').toString('utf8'));
+      const inner = j.api_key || j.apiKey || j.key;
+      if (typeof inner === 'string' && inner.trim()) k = inner.trim();
+    } catch { /* pas une clé encodée */ }
+  }
+  return k;
+}
+export function describeMailSetup() {
+  const k = brevoKey();
+  if (k) {
+    const kind = k.startsWith('xkeysib-') ? 'clé API (correcte)' : k.startsWith('xsmtpsib-') ? 'clé SMTP (ne marche pas ici : il faut une clé API « xkeysib- »)' : 'format inconnu';
+    const decoded = String(process.env.BREVO_API_KEY || '').trim() !== k ? ', nettoyée ou décodée' : '';
+    return `Brevo — ${kind}${decoded}, ${k.length} caractères`;
+  }
+  if (process.env.RESEND_API_KEY) return 'Resend';
+  return 'aucun service d’envoi (les mails sont écrits dans le journal)';
+}
+
 export async function sendMail({ to, subject, html, text }) {
   const from = process.env.MAIL_FROM || 'Lanterne <onboarding@resend.dev>';
   try {
-    if (process.env.BREVO_API_KEY) {
+    if (brevoKey()) {
       const res = await fetch('https://api.brevo.com/v3/smtp/email', {
         method: 'POST',
-        headers: { 'api-key': process.env.BREVO_API_KEY, 'Content-Type': 'application/json', Accept: 'application/json' },
+        headers: { 'api-key': brevoKey(), 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({ sender: parseFrom(from), to: [{ email: to }], subject, htmlContent: html, textContent: text }),
       });
       if (!res.ok) { console.error('[mail] échec Brevo', res.status, await res.text()); return { ok: false }; }

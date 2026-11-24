@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr" data-theme="dark">
+<html lang="fr" data-theme="dark" class="splashing">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -17,11 +17,36 @@
 <script>
   try { var t = localStorage.getItem('lanterne-theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
 </script>
+<link rel="preload" href="/vendor/fonts/orbitron/orbitron-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/vendor/fonts/work-sans/work-sans-latin-300-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <div id="splash" aria-hidden="true">
-  <svg class="logo-mark splash-mark" viewBox="0 0 64 80"><use href="#lanterne-logo"/></svg>
+  <div class="splash-panel">
+    <div class="splash-layer l1"></div>
+    <div class="splash-layer l2"></div>
+    <div class="splash-layer l3"></div>
+  </div>
+  <div class="splash-center">
+    <svg class="splash-mark" viewBox="0 0 64 80">
+      <g class="splash-lines" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">
+        <circle pathLength="1" cx="32" cy="6" r="4"/>
+        <path pathLength="1" d="M32 10 V14"/>
+        <path pathLength="1" d="M18 22 L24 14 H40 L46 22 Z"/>
+        <path pathLength="1" d="M14 22 H50"/>
+        <path pathLength="1" d="M18 22 V62"/>
+        <path pathLength="1" d="M46 22 V62"/>
+        <path pathLength="1" d="M26 22 V62" opacity=".45"/>
+        <path pathLength="1" d="M38 22 V62" opacity=".45"/>
+        <path pathLength="1" d="M14 62 H50"/>
+        <path pathLength="1" d="M18 62 L24 70 H40 L46 62"/>
+        <path pathLength="1" d="M22 76 H42"/>
+      </g>
+      <path class="splash-flame" d="M32 30 C36.5 36 39 40 39 45 C39 49.5 35.8 53 32 53 C28.2 53 25 49.5 25 45 C25 41.5 27 39 29 36.5 C29.6 39.5 31 41 32.5 41.5 C31.6 37.8 31.4 34 32 30 Z" fill="currentColor"/>
+    </svg>
+    <div class="splash-word">LANTERNE</div>
+  </div>
 </div>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <defs>

@@ -4,6 +4,8 @@ import { state, isMember, isAdmin, navigate, setRenderer, loadAssos, loadEvents,
 import { monthView, listView, mapView, eventView, mapStyle } from './views-agenda.js';
 import { eventForm } from './views-form.js';
 import { directoryView, profileView, registerView, loginView, accountView, adminView, legalView } from './views-other.js';
+import { playSplash } from './splash.js';
+import { watchUpdates } from './update.js';
 
 window.lanterne = { contact: '' };
 
@@ -25,37 +27,68 @@ const NAV = [
   { href: '/associations', label: 'Associations', icon: 'users', match: (p) => p.startsWith('/associations') || p.startsWith('/inscription') },
 ];
 
+// Néon de navigation : il glisse vers l'onglet actif (adapté du « Tubelight Navbar » d'ayushmxxn, 21st.dev)
+const lampMemory = new Map();
+function placeLamps({ animate = true } = {}) {
+  for (const nav of document.querySelectorAll('[data-lampnav]')) {
+    const lamp = nav.querySelector('.navlamp');
+    const active = nav.querySelector('a[aria-current="page"]');
+    const key = nav.dataset.lampnav;
+    if (!lamp) continue;
+    if (!active || !nav.getClientRects().length || getComputedStyle(nav).display === 'none') { lamp.style.opacity = '0'; lampMemory.delete(key); continue; }
+    const to = { x: active.offsetLeft, w: active.offsetWidth };
+    const from = lampMemory.get(key);
+    lamp.style.opacity = '1';
+    if (from && animate) {
+      lamp.style.transition = 'none';
+      lamp.style.transform = `translateX(${from.x}px)`; lamp.style.width = `${from.w}px`;
+      void lamp.offsetWidth; // on part de l'ancienne position…
+      lamp.style.transition = '';
+    } else lamp.style.transition = 'none';
+    lamp.style.transform = `translateX(${to.x}px)`; lamp.style.width = `${to.w}px`; // …et on glisse vers la nouvelle
+    if (!from || !animate) requestAnimationFrame(() => { lamp.style.transition = ''; });
+    lampMemory.set(key, to);
+  }
+}
+window.addEventListener('resize', () => placeLamps({ animate: false }));
+document.fonts?.ready.then(() => placeLamps({ animate: false }));
+
 function renderShell() {
   const path = location.pathname;
   const u = state.user;
-  const pendingAdmin = isAdmin() ? '' : '';
-  const accountLink = u ? { href: '/compte', label: u.name ? u.name.split(' ')[0] : 'Compte', icon: 'user' } : { href: '/connexion', label: 'Connexion', icon: 'user' };
   const dark = document.documentElement.dataset.theme !== 'light';
+  const inList = path.startsWith('/liste');
+  const isAgenda = (p) => p === '/' || p.startsWith('/carte') || p.startsWith('/evenement') || p.startsWith('/nouveau') || (isAdmin() && p.startsWith('/liste'));
+  const cur = (on) => (on ? raw('aria-current="page"') : '');
   const shell = document.getElementById('shell') || (() => {
-    const s = document.createElement('div'); s.id = 'shell'; document.getElementById('app').append(s); return s;
+    const el = document.createElement('div'); el.id = 'shell'; document.getElementById('app').append(el); return el;
   })();
   shell.innerHTML = String(html`
     <header class="topbar">
       <a class="brand" href="/" aria-label="Lanterne, accueil">${logo('logo-mark')}<span class="brand-name">LANTERNE</span></a>
-      <nav class="topnav" aria-label="Navigation principale">
-        ${NAV.map((n) => html`<a href="${n.href}" ${n.match(path) ? raw('aria-current="page"') : ''}>${n.label}</a>`)}
-        ${isAdmin() ? html`<a href="/admin" ${path.startsWith('/admin') ? raw('aria-current="page"') : ''}>Administration</a>` : ''}
+      <nav class="topnav" data-lampnav="top" aria-label="Navigation principale">
+        <span class="navlamp" aria-hidden="true"></span>
+        <a href="/" ${cur(isAgenda(path) || inList)}>Agenda</a>
+        <a href="/associations" ${cur(path.startsWith('/associations') || path.startsWith('/inscription'))}>Associations</a>
+        ${isAdmin() ? html`<a href="/admin" ${cur(path.startsWith('/admin'))}>Administration</a>` : ''}
       </nav>
       <span class="spacer"></span>
       <button class="icon-btn" data-theme-toggle aria-label="${dark ? 'Passer en mode clair' : 'Passer en mode sombre'}" title="${dark ? 'Mode clair' : 'Mode sombre'}">${icon(dark ? 'sun' : 'moon')}</button>
-      ${isAdmin() ? html`<a class="icon-btn" href="/admin" aria-label="Administration" style="display:none" data-admin-mobile>${icon('shield')}</a>` : ''}
-      ${u ? html`<a class="btn small ghost" href="/compte" ${path.startsWith('/compte') ? raw('aria-current="page"') : ''}>${icon('user')}<span>${accountLink.label}</span></a>`
-        : html`<a class="btn small" href="/connexion">Connexion</a>`}
+      ${u ? html`<a class="btn small ghost account-btn" href="/compte" ${cur(path.startsWith('/compte'))}>${icon('user')}<span>${u.name ? u.name.split(' ')[0] : 'Compte'}</span></a>`
+        : html`<a class="btn small account-btn" href="/connexion">Connexion</a>`}
     </header>
-    <nav class="bottomnav" aria-label="Navigation">
-      ${NAV.map((n) => html`<a href="${n.href}" ${n.match(path) ? raw('aria-current="page"') : ''}>${icon(n.icon)}${n.label}</a>`)}
-      ${isAdmin() ? html`<a href="/admin" ${path.startsWith('/admin') ? raw('aria-current="page"') : ''}>${icon('shield')}Admin</a>` : html`<a href="/liste" ${path.startsWith('/liste') ? raw('aria-current="page"') : ''}>${icon('list')}Liste</a>`}
-      <a href="${accountLink.href}" ${path.startsWith('/compte') || path.startsWith('/connexion') ? raw('aria-current="page"') : ''}>${icon('user')}${u ? 'Compte' : 'Connexion'}</a>
+    <nav class="bottomnav" data-lampnav="bottom" aria-label="Navigation">
+      <span class="navlamp" aria-hidden="true"></span>
+      <a href="/" ${cur(isAgenda(path))}>${icon('calendar')}<span>Agenda</span></a>
+      ${isAdmin() ? '' : html`<a href="/liste" ${cur(inList)}>${icon('list')}<span>Liste</span></a>`}
+      <a href="/associations" ${cur(path.startsWith('/associations') || path.startsWith('/inscription'))}>${icon('users')}<span>Assos</span></a>
+      ${isAdmin() ? html`<a href="/admin" ${cur(path.startsWith('/admin'))}>${icon('shield')}<span>Admin</span></a>` : ''}
+      <a href="${u ? '/compte' : '/connexion'}" ${cur(path.startsWith('/compte') || path.startsWith('/connexion'))}>${icon('user')}<span>${u ? 'Compte' : 'Connexion'}</span></a>
     </nav>
-    ${isMember() && !path.startsWith('/nouveau') && !path.endsWith('/modifier') ? html`<button class="fab" data-fab aria-label="Poser une nouvelle date" title="Nouvelle date">${icon('plus')}</button>` : ''}
-    ${pendingAdmin}`);
+    ${isMember() && !path.startsWith('/nouveau') && !path.endsWith('/modifier') ? html`<button class="fab" data-fab aria-label="Poser une nouvelle date" title="Nouvelle date">${icon('plus')}</button>` : ''}`);
   $('[data-theme-toggle]', shell).addEventListener('click', () => setTheme(dark ? 'light' : 'dark'));
   $('[data-fab]', shell)?.addEventListener('click', () => navigate('/nouveau'));
+  placeLamps();
 }
 window.lanterne.renderShell = renderShell;
 
@@ -143,6 +176,8 @@ async function render() {
     foot.querySelector('[data-sub-foot]').addEventListener('click', async (ev) => { ev.preventDefault(); (await import('./core.js')).openSubscribe(); });
   }
   if (!location.pathname.startsWith('/evenement')) document.title = 'Lanterne · l’agenda commun des associations stéphanoises';
+  // Transition douce entre les pages
+  mainEl.classList.remove('view-enter'); void mainEl.offsetWidth; mainEl.classList.add('view-enter');
   for (const [re, fn] of routes) {
     const m = re.exec(location.pathname);
     if (m) {
@@ -171,17 +206,20 @@ window.addEventListener('popstate', render);
 
 // ---------- démarrage ----------
 (async function boot() {
-  const t0 = performance.now();
+  let shown;
+  const ready = new Promise((r) => { shown = r; });
+  const splash = playSplash(ready);
   try {
     const cfg = await api('/api/config');
     state.user = cfg.user; state.palette = cfg.palette; state.categories = cfg.categories;
     window.lanterne.contact = cfg.contact || '';
+    watchUpdates(cfg.version);
   } catch (err) {
     toast('Connexion au serveur impossible. Réessayez dans un instant.', 'error');
   }
   await render();
-  // La flamme pulse doucement à l'ouverture, puis l'appli apparaît
-  const wait = Math.max(0, 900 - (performance.now() - t0));
-  setTimeout(() => { document.getElementById('splash')?.classList.add('gone'); setTimeout(() => document.getElementById('splash')?.remove(), 600); }, wait);
+  shown();
+  await splash;
+  placeLamps({ animate: false });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 })();
