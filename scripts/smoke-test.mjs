@@ -33,8 +33,11 @@ async function login(email) {
   const r = await c.req('/api/auth/request', { method: 'POST', body: { email } });
   assert.equal(r.status, 200);
   await new Promise((res) => setTimeout(res, 100));
-  const res = await c.req(lastLink(email, 'verify'), { raw: true });
-  assert.equal(res.status, 302);
+  const link = lastLink(email, 'verify');
+  // Ouvrir le lien (comme un antivirus de messagerie) ne doit pas le consommer
+  assert.equal((await fetch(BASE + link)).status, 200);
+  const r2 = await c.req('/api/auth/verify', { method: 'POST', body: { token: new URL(BASE + link).searchParams.get('token') } });
+  assert.equal(r2.status, 200, JSON.stringify(r2.data));
   return c;
 }
 
@@ -69,8 +72,8 @@ assert.equal(r.status, 403);
 ok('connexion par lien magique ; association en attente ne publie pas');
 
 // Lien déjà utilisé
-const used = lastLink('alice@amis.test', 'verify');
-assert.match((await anon.req(used, { raw: true })).headers.get('location'), /erreur=lien/);
+const used = new URL(BASE + lastLink('alice@amis.test', 'verify')).searchParams.get('token');
+assert.equal((await anon.req('/api/auth/verify', { method: 'POST', body: { token: used } })).status, 410);
 ok('un lien de connexion ne sert qu’une fois');
 
 // Validation par l'administrateur
@@ -180,8 +183,10 @@ ok('liens d’abonnement : public, personnel, filtrés par association et par ca
 r = await alice.req(`/api/associations/${A.id}/invitations`, { method: 'POST', body: { emails: 'carla@amis.test, bruno@ql.test, pasunmail' } });
 assert.deepEqual(r.data.sent, ['carla@amis.test']); assert.equal(r.data.skipped.length, 2);
 const carla = new Client();
-const res = await carla.req(lastLink('carla@amis.test', 'invite'), { raw: true });
-assert.match(res.headers.get('location'), /bienvenue/);
+const invToken = new URL(BASE + lastLink('carla@amis.test', 'invite')).searchParams.get('token');
+assert.equal((await anon.req(`/api/auth/invite-info?token=${invToken}`)).data.association.name, 'Les Amis du Fil');
+const res = await carla.req('/api/auth/invite', { method: 'POST', body: { token: invToken } });
+assert.match(res.data.redirect, /bienvenue/);
 me = (await carla.req('/api/me')).data.user;
 assert.equal(me.association.id, A.id);
 ok('invitation par mail : la personne rejoint l’association');
@@ -197,6 +202,18 @@ ok('lien de partage avec aperçu pour les dates publiques seulement');
 assert.equal((await carla.req('/api/me', { method: 'DELETE' })).status, 200);
 assert.equal((await carla.req('/api/me')).data.user, null);
 ok('suppression du compte par l’utilisateur');
+
+// Robustesse et sécurité
+assert.equal((await anon.req('/api/events?limit=-5')).status, 200);
+assert.equal((await anon.req('/api/events?from=nimporte')).status, 400);
+assert.equal((await anon.req('/api/events/abc')).status, 404);
+const before = fs.readFileSync(LOG, 'utf8').length;
+assert.equal((await anon.req('/api/auth/request', { method: 'POST', body: { email: 'inconnu@nulle-part.test' } })).status, 200);
+await new Promise((r) => setTimeout(r, 100));
+assert.doesNotMatch(fs.readFileSync(LOG, 'utf8').slice(before), /inconnu@nulle-part/);
+const h = (await fetch(BASE + '/')).headers;
+assert.match(h.get('content-security-policy') || '', /default-src 'self'/);
+ok('paramètres invalides refusés proprement, aucun mail aux adresses inconnues, politique de sécurité active');
 
 // Fichiers statiques
 for (const p of ['/', '/styles.css', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons/icon-192.png', '/vendor/maplibre/maplibre-gl.mjs', '/vendor/fonts/orbitron/orbitron-latin-500-normal.woff2', '/liste', '/mentions-legales']) {

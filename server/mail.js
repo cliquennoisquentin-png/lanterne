@@ -49,7 +49,18 @@ export function describeMailSetup() {
   return 'aucun service d’envoi (les mails sont écrits dans le journal)';
 }
 
+// Plafond journalier : on garde une marge sous le quota gratuit de Brevo (300 mails par jour)
+const DAILY_LIMIT = Number(process.env.MAIL_DAILY_LIMIT || 280);
+let dayKey = ''; let sentToday = 0;
+
 export async function sendMail({ to, subject, html, text }) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== dayKey) { dayKey = today; sentToday = 0; }
+  if (sentToday >= DAILY_LIMIT) {
+    console.error(`[mail] plafond journalier atteint (${DAILY_LIMIT}), mail non envoyé à ${to.replace(/(.).*@/, '$1…@')}`);
+    return { ok: false };
+  }
+  sentToday++;
   const from = process.env.MAIL_FROM || 'Lanterne <onboarding@resend.dev>';
   try {
     if (brevoKey()) {

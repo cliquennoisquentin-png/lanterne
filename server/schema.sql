@@ -145,3 +145,6 @@ CREATE INDEX IF NOT EXISTS history_entity_idx ON history (entity, entity_id);
 
 -- Évolutions
 ALTER TABLE venues ADD COLUMN IF NOT EXISTS district TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS comments_event_idx ON comments (event_id);
+CREATE INDEX IF NOT EXISTS event_orgs_asso_idx ON event_orgs (association_id);
+CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions (user_id);

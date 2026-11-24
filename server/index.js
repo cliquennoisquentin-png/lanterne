@@ -47,7 +47,7 @@ function baseUrl(req) {
   return `${req.protocol}://${req.get('host')}`;
 }
 
-// Limiteur simple en mémoire (demandes de lien de connexion)
+// Limiteur simple en mémoire (demandes de lien de connexion, inscriptions, invitations…)
 const hits = new Map();
 function limited(key, max, windowMs) {
   const now = Date.now();
@@ -56,6 +56,15 @@ function limited(key, max, windowMs) {
   hits.set(key, arr);
   return arr.length > max;
 }
+// Ménage régulier pour que le limiteur ne grossisse pas indéfiniment
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, arr] of hits) if (!arr.length || now - arr[arr.length - 1] > 2 * 3600e3) hits.delete(k);
+}, 30 * 60e3).unref();
+
+// Valeurs de requête sûres
+const dateParam = (v) => { const d = new Date(String(v)); return Number.isNaN(d.getTime()) ? null : d; };
+const intParam = (v, min, max, dflt) => { const n = Math.trunc(Number(v)); return Number.isFinite(n) && n >= min ? Math.min(n, max) : dflt; };
 
 // ---------- application ----------
 const app = express();
@@ -65,12 +74,37 @@ app.use(compression()); // fichiers compressés : chargements plus rapides sur m
 app.use(express.json({ limit: '4mb' }));
 app.use(cookieParser());
 
+// En-têtes de sécurité. La politique de contenu (CSP) n'autorise que nos propres fichiers,
+// le fond de carte OpenFreeMap et la recherche d'adresse de l'IGN.
+const inlineScriptHashes = [...fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8').matchAll(/<script>([\s\S]*?)<\/script>/g)]
+  .map((m) => `'sha256-${crypto.createHash('sha256').update(m[1]).digest('base64')}'`).join(' ');
+const CSP = [
+  "default-src 'self'",
+  `script-src 'self' ${inlineScriptHashes}`,
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: https://tiles.openfreemap.org",
+  "font-src 'self' data:",
+  "connect-src 'self' https://tiles.openfreemap.org https://data.geopf.fr",
+  "worker-src 'self' blob:",
+  "child-src 'self' blob:",
+  "manifest-src 'self'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+  "object-src 'none'",
+].join('; ');
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  if (!req.path.startsWith('/img/')) res.setHeader('Content-Security-Policy', CSP);
+  if (PROD) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   next();
 });
+// Numéros dans les adresses (/api/events/12…) : on refuse proprement ce qui n'est pas un nombre
+app.param('id', (req, res, next, id) => (/^\d{1,10}$/.test(id) ? next() : res.status(404).json({ error: 'Introuvable.' })));
 
 // Protection CSRF : toute écriture sur l'API doit porter l'en-tête maison
 app.use('/api', (req, res, next) => {
@@ -155,40 +189,46 @@ app.post('/api/auth/request', wrap(async (req, res) => {
     await q(`INSERT INTO login_tokens (token_hash, email, expires_at) VALUES ($1, $2, now() + interval '30 minutes')`, [sha(t), email]);
     const sent = await loginMail(email, `${base}/auth/verify?token=${t}`);
     if (!sent.ok) fail(502, 'Le mail de connexion n’a pas pu partir. Réessayez dans un instant ; si ça continue, prévenez un administrateur.');
-  } else {
-    await sendMail({
-      to: email,
-      subject: 'Connexion à Lanterne',
-      html: `<p>Aucun compte Lanterne n’est associé à cette adresse.</p><p>Pour rejoindre Lanterne, inscrivez votre association : <a href="${base}/inscription">${base}/inscription</a>, ou demandez à un membre de votre association de vous inviter.</p>`,
-      text: `Aucun compte Lanterne n'est associé à cette adresse. Inscrivez votre association : ${base}/inscription, ou demandez une invitation à un membre de votre association.`,
-    });
   }
-  // Même réponse dans tous les cas : on ne révèle pas qui a un compte
+  // Adresse inconnue : aucun mail (sinon n'importe qui pourrait épuiser le quota d'envoi).
+  // Même réponse dans tous les cas : on ne révèle pas qui a un compte.
   res.json({ ok: true });
 }));
 
-app.get('/auth/verify', wrap(async (req, res) => {
-  const t = String(req.query.token || '');
+// Les liens des mails (/auth/verify, /auth/invite) ouvrent une page avec un bouton : seul ce clic
+// consomme le lien. Ainsi, les antivirus de messagerie qui « visitent » les liens ne les grillent pas.
+const tokenParam = (v) => (typeof v === 'string' && /^[\w-]{20,100}$/.test(v) ? v : '');
+
+app.post('/api/auth/verify', wrap(async (req, res) => {
+  const t = tokenParam(req.body.token);
   const row = t && await one(`UPDATE login_tokens SET used_at = now() WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now() RETURNING email`, [sha(t)]);
-  if (!row) return res.redirect('/connexion?erreur=lien');
+  if (!row) fail(410, 'Ce lien de connexion a expiré ou a déjà servi. Demandez-en un nouveau.');
   const u = await ensureUser(row.email);
   await createSession(res, u.id);
-  res.redirect(u.name ? '/' : '/compte?bienvenue=1');
+  res.json({ redirect: u.name ? '/' : '/compte?bienvenue=1' });
 }));
 
-app.get('/auth/invite', wrap(async (req, res) => {
-  const t = String(req.query.token || '');
-  const inv = t && await one(`SELECT i.*, a.status FROM invitations i JOIN associations a ON a.id = i.association_id WHERE i.token_hash = $1 AND i.accepted_at IS NULL AND i.created_at > now() - interval '30 days'`, [sha(t)]);
-  if (!inv) return res.redirect('/connexion?erreur=invitation');
+const findInvite = (t) => one(`SELECT i.*, a.status, a.name AS asso_name, a.color AS asso_color FROM invitations i JOIN associations a ON a.id = i.association_id
+  WHERE i.token_hash = $1 AND i.accepted_at IS NULL AND i.created_at > now() - interval '30 days'`, [sha(t)]);
+
+app.get('/api/auth/invite-info', wrap(async (req, res) => {
+  const t = tokenParam(req.query.token);
+  const inv = t && await findInvite(t);
+  if (!inv) fail(410, 'Cette invitation a expiré ou a déjà servi. Demandez une nouvelle invitation à votre association.');
+  res.json({ association: { name: inv.asso_name, color: inv.asso_color } });
+}));
+
+app.post('/api/auth/invite', wrap(async (req, res) => {
+  const t = tokenParam(req.body.token);
+  const inv = t && await findInvite(t);
+  if (!inv) fail(410, 'Cette invitation a expiré ou a déjà servi. Demandez une nouvelle invitation à votre association.');
   let u = await one('SELECT * FROM users WHERE email = $1', [inv.email]);
-  if (u && u.association_id && u.association_id !== inv.association_id) {
-    return res.redirect('/connexion?erreur=deja-membre');
-  }
+  if (u && u.association_id && u.association_id !== inv.association_id) fail(409, 'Cette adresse est déjà rattachée à une autre association.');
   if (!u) u = await ensureUser(inv.email, { association_id: inv.association_id });
   else await q('UPDATE users SET association_id = $1 WHERE id = $2', [inv.association_id, u.id]);
   await q('UPDATE invitations SET accepted_at = now() WHERE id = $1', [inv.id]);
   await createSession(res, u.id);
-  res.redirect(u.name ? '/' : '/compte?bienvenue=1');
+  res.json({ redirect: u.name ? '/' : '/compte?bienvenue=1' });
 }));
 
 app.post('/api/auth/logout', wrap(async (req, res) => {
@@ -254,8 +294,8 @@ app.post('/api/images', wrap(async (req, res) => {
   res.json({ id: await saveImage(req.body.data) });
 }));
 
-app.get('/img/:id', wrap(async (req, res) => {
-  const img = await one('SELECT mime, data FROM images WHERE id = $1', [req.params.id]);
+app.get('/img/:imageId', wrap(async (req, res) => {
+  const img = await one('SELECT mime, data FROM images WHERE id = $1', [String(req.params.imageId).slice(0, 40)]);
   if (!img) return res.status(404).end();
   res.setHeader('Content-Type', img.mime);
   res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
@@ -373,7 +413,7 @@ app.post('/api/associations/:id/invitations', wrap(async (req, res) => {
   const emails = String(req.body.emails || '').split(/[\s,;]+/).map(normEmail).filter(Boolean);
   if (!emails.length) fail(400, 'Indiquez au moins une adresse.');
   if (emails.length > 30) fail(400, '30 invitations maximum à la fois.');
-  if (limited(`inv:${u.id}`, 100, 60 * 60e3)) fail(429, 'Trop d’invitations. Réessayez plus tard.');
+  if (limited(`inv:${u.id}`, 40, 60 * 60e3)) fail(429, 'Trop d’invitations d’un coup. Réessayez dans une heure.');
   const base = baseUrl(req);
   const result = { sent: [], skipped: [] };
   for (const email of emails) {
@@ -496,11 +536,14 @@ async function canEdit(user, eventId) {
 app.get('/api/events', wrap(async (req, res) => {
   const params = [];
   const where = ['e.deleted_at IS NULL', 'a.status = \'approved\'', visibility(req.user, params)];
-  if (req.query.from) { params.push(new Date(req.query.from)); where.push(`COALESCE(e.ends_at, e.starts_at) >= $${params.length}`); }
-  if (req.query.to) { params.push(new Date(req.query.to)); where.push(`e.starts_at < $${params.length}`); }
-  if (req.query.asso) { params.push(Number(req.query.asso)); where.push(`EXISTS (SELECT 1 FROM event_orgs y WHERE y.event_id = e.id AND y.association_id = $${params.length})`); }
+  const from = req.query.from ? dateParam(req.query.from) : null;
+  const to = req.query.to ? dateParam(req.query.to) : null;
+  if ((req.query.from && !from) || (req.query.to && !to)) fail(400, 'Date invalide.');
+  if (from) { params.push(from); where.push(`COALESCE(e.ends_at, e.starts_at) >= $${params.length}`); }
+  if (to) { params.push(to); where.push(`e.starts_at < $${params.length}`); }
+  if (req.query.asso) { params.push(intParam(req.query.asso, 1, 2e9, 0)); where.push(`EXISTS (SELECT 1 FROM event_orgs y WHERE y.event_id = e.id AND y.association_id = $${params.length})`); }
   const order = req.query.order === 'desc' ? 'DESC' : 'ASC';
-  const limit = Math.min(Number(req.query.limit) || 2000, 2000);
+  const limit = intParam(req.query.limit, 1, 2000, 2000);
   const rows = await all(`${EVENT_SELECT} WHERE ${where.join(' AND ')} ORDER BY e.starts_at ${order} LIMIT ${limit}`, params);
   res.json({ events: rows.map(slimEvent) });
 }));

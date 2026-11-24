@@ -3,7 +3,7 @@ import { html, raw, $, $$, icon, logo, api, toast, STATUS, TYPES, storage } from
 import { state, isMember, isAdmin, navigate, setRenderer, loadAssos, loadEvents, saveFilters, filtersActive, invalidate, requireLoginToast, placeKey } from './core.js';
 import { monthView, listView, mapView, eventView, mapStyle } from './views-agenda.js';
 import { eventForm } from './views-form.js';
-import { directoryView, profileView, registerView, loginView, accountView, adminView, legalView } from './views-other.js';
+import { directoryView, profileView, registerView, loginView, accountView, adminView, legalView, authVerifyView, authInviteView } from './views-other.js';
 import { playSplash } from './splash.js';
 import { watchUpdates } from './update.js';
 
@@ -164,6 +164,8 @@ const routes = [
   [/^\/compte\/?$/, () => accountView()],
   [/^\/admin\/?$/, () => adminView()],
   [/^\/mentions-legales\/?$/, () => legalView()],
+  [/^\/auth\/verify\/?$/, () => authVerifyView()],
+  [/^\/auth\/invite\/?$/, () => authInviteView()],
 ];
 let mainEl;
 async function render() {

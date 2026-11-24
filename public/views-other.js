@@ -234,6 +234,55 @@ export function loginView() {
 }
 
 // =====================================================================
+// ARRIVÉE DEPUIS UN MAIL : un bouton à toucher (le lien n'est consommé qu'à ce moment-là)
+// =====================================================================
+async function finishAuth(btn, url, token) {
+  btn.disabled = true;
+  btn.textContent = 'Connexion…';
+  try {
+    const r = await api(url, { method: 'POST', body: { token } });
+    await refreshMe();
+    invalidate();
+    window.lanterne.renderShell();
+    history.replaceState({}, '', '/');
+    navigate(r.redirect || '/', { replace: true });
+  } catch (err) {
+    main().innerHTML = String(html`<div class="narrow hero-login" style="max-width:460px">${logo('logo-mark')}<h1>Lien plus valable</h1>
+      <p class="muted">${err.message}</p><a class="btn primary" href="/connexion">Recevoir un nouveau lien</a></div>`);
+  }
+}
+
+export function authVerifyView() {
+  const token = params().get('token') || '';
+  main().innerHTML = String(html`<div class="narrow hero-login" style="max-width:460px">${logo('logo-mark pulse')}
+    <h1>Bienvenue sur Lanterne</h1>
+    <p class="muted">Touchez le bouton pour vous connecter.</p>
+    <button class="btn primary" data-go style="min-width:240px;min-height:52px;font-size:1.05rem">Me connecter</button></div>`);
+  const btn = $('[data-go]');
+  btn.focus();
+  btn.addEventListener('click', () => finishAuth(btn, '/api/auth/verify', token));
+}
+
+export async function authInviteView() {
+  const token = params().get('token') || '';
+  main().innerHTML = '<div class="spinner"></div>';
+  let info;
+  try { info = await api(`/api/auth/invite-info?token=${encodeURIComponent(token)}`); } catch (err) {
+    main().innerHTML = String(html`<div class="narrow hero-login" style="max-width:460px">${logo('logo-mark')}<h1>Invitation plus valable</h1>
+      <p class="muted">${err.message}</p></div>`);
+    return;
+  }
+  const a = info.association;
+  main().innerHTML = String(html`<div class="narrow hero-login" style="max-width:460px">${logo('logo-mark pulse')}
+    <h1>Rejoindre ${a.name}</h1>
+    <p class="muted">Vous êtes invité·e à rejoindre <b style="color:${a.color}">${a.name}</b> sur Lanterne, l’agenda commun des associations stéphanoises.</p>
+    <button class="btn primary" data-go style="min-width:240px;min-height:52px;font-size:1.05rem">Rejoindre l’association</button></div>`);
+  const btn = $('[data-go]');
+  btn.focus();
+  btn.addEventListener('click', () => finishAuth(btn, '/api/auth/invite', token));
+}
+
+// =====================================================================
 // MON COMPTE
 // =====================================================================
 export function accountView() {
