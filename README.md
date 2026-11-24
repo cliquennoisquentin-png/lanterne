@@ -20,7 +20,7 @@ Version 1, conforme au cahier des charges du 24 novembre 2026.
 | Archives, « l'an dernier à la même période » | Liste → Archives, bouton « L'an dernier » |
 | Accueil = calendrier du mois, vues Mois / Liste / Carte | `public/views-agenda.js` |
 | Filtres dans un seul panneau (association, catégorie, commune/quartier, statut, type) | bouton « Filtres » |
-| Saisie rapide : un toucher sur un jour ouvre « Créer un événement ce jour-là ? » (OK / Annuler, avec les dates déjà posées ce jour-là) — remplace l'appui long, à la demande de Quentin ; bouton « + » toujours visible | calendrier |
+| Saisie rapide : un toucher sur un jour l'affiche dans la carte du jour (ses dates, puis un bouton « Créer un événement ce jour-là ») ; bouton « + » toujours visible | calendrier |
 | « On y va » / intéressé, commentaires, co-organisation | fiche événement |
 | Profils d'association et annuaire | `/associations` |
 | Historique de qui a modifié quoi, retour en arrière | fiche événement, onglet Historique de l'admin |
@@ -45,7 +45,7 @@ Ajouts depuis la version 1 :
 | Une action qui échoue affiche toujours un message | `public/app.js` |
 | Créer son compte avec un mot de passe et se connecter sans mail (le lien par mail reste possible) | `/creer-un-compte`, `/connexion`, Mon compte, `/api/auth/signup` et `/api/auth/login` |
 | Choisir un mot de passe dès l'inscription de son association | `/inscription` |
-| Carte : une adresse tapée à la main est placée automatiquement (et les lieux existants au démarrage) ; les dates hors carte sont listées sous la carte | `server/geocode.js`, Administration → Lieux |
+| Carte : une pastille par date (jamais regroupées ; au même lieu, elles s'écartent en cercle) ; une adresse tapée à la main est placée automatiquement (et les lieux existants au démarrage) ; les dates hors carte sont listées sous la carte | `server/geocode.js`, Administration → Lieux |
 | Événements du territoire : ceux de l'Office de tourisme de Saint-Étienne et des offices voisins (DATAtourisme), avec un bouton sous le jour choisi du calendrier | `/territoire`, `server/tourisme.js` |
 
 La version 2 (suivre des associations, bourse matériel et bénévoles, affiche du mois, bilan annuel, modération, nom de domaine) n'est pas incluse, comme prévu.

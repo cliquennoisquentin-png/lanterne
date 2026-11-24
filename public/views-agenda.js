@@ -66,7 +66,7 @@ export async function monthView() {
         <span>${lantern('var(--accent)', 'annule')} annulée</span>
         <span>Plus un jour brille, plus il est chargé
           <span class="glow-scale" aria-hidden="true">${[0, 1, 2, 3, 4].map((g) => html`<i class="day" style="--g:${g};min-height:0;padding:0"></i>`)}</span></span>
-        ${isMember() ? html`<span class="kbd-hint">Touchez un jour pour y créer une date</span>` : ''}
+        <span class="kbd-hint">Touchez un jour pour voir ses dates</span>
       </div></div>
       <aside class="day-panel card" aria-live="polite"></aside>
     </div>`);
@@ -106,9 +106,12 @@ export async function monthView() {
     $$('.day.selected').forEach((d) => d.classList.remove('selected'));
     $(`.day[data-day="${k}"]`)?.classList.add('selected');
     const list = (byDay.get(k) || []).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
+    const active = list.filter((e) => e.status !== 'annule').length;
     panel.innerHTML = String(html`<h2>${keyLabel(k)}</h2>
-      ${list.length ? html`<div class="list-events">${list.map((e) => eventCard(e))}</div>` : html`<p class="muted small">Aucune date ce jour-là${filtersActive() ? ' (avec les filtres actuels)' : ''} : la place est libre.</p>`}
-      ${isMember() ? html`<button class="btn small" style="margin-top:12px" data-add="${k}">${icon('plus')}Ajouter une date ce jour</button>` : ''}
+      ${list.length ? html`<p class="small muted day-busy-line">${active ? `${active} date${active > 1 ? 's' : ''} ce jour-là` : 'Seulement une date annulée ce jour-là'}</p>
+        <div class="list-events">${list.map((e) => eventCard(e))}</div>` : html`<p class="muted small">Aucune date ce jour-là${filtersActive() ? ' (avec les filtres actuels)' : ''} : la place est libre.</p>`}
+      ${isMember() ? html`<button class="btn primary day-create" data-add="${k}">${icon('plus')}Créer un événement ce jour-là</button>`
+        : !state.user ? html`<p class="small faint day-create-hint">Vous organisez quelque chose ? <a href="/connexion">Connectez-vous</a> pour poser une date.</p>` : ''}
       ${state.tourisme ? html`<a class="territory-btn" href="/territoire?jour=${k}">
         <span class="territory-btn-icon">${icon('compass')}</span>
         <span class="territory-btn-text"><b>Événements du territoire</b><span data-tcount>Office de tourisme et alentours</span></span>
@@ -128,37 +131,11 @@ export async function monthView() {
   const sel = p.get('jour') && days.includes(p.get('jour')) ? p.get('jour') : (today.slice(0, 7) === month ? today : first);
   showDay(sel);
 
-  // Un toucher sur un jour : une fenêtre propose de créer un événement ce jour-là
-  const askCreate = (k) => {
-    const list = (byDay.get(k) || []).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
-    const active = list.filter((e) => e.status !== 'annule').length;
-    const title = keyLabel(k);
-    openModal({
-      title: title.charAt(0).toUpperCase() + title.slice(1),
-      body: html`<div class="ask-create">
-        ${list.length ? html`
-          <p class="ask-busy ${active >= 2 ? 'hot' : ''}">${icon('calendar')}${active ? `Déjà ${active} date${active > 1 ? 's' : ''} ce jour-là` : 'Une date annulée ce jour-là'}</p>
-          <div class="list-events ask-list">${list.slice(0, 3).map((e) => eventCard(e))}</div>
-          ${list.length > 3 ? html`<p class="small faint">et ${list.length - 3} autre${list.length > 4 ? 's' : ''}…</p>` : ''}`
-        : html`<p class="ask-free">${lantern('var(--accent)')}La place est libre ce jour-là.</p>`}
-        <p class="ask-question">Veux-tu créer un événement <span class="nowrap">ce jour-là&nbsp;?</span></p>
-      </div>`,
-      foot: html`<button class="btn ghost" data-close>Annuler</button><button class="btn primary" data-ok>${icon('plus')}OK, créer</button>`,
-      onMount(d, close) {
-        const ok = d.querySelector('[data-ok]');
-        ok.focus();
-        ok.addEventListener('click', () => { close(); navigate(`/nouveau?date=${k}`); });
-      },
-    });
-  };
+  // Un toucher sur un jour : il s'affiche dans la carte du jour, avec ses dates et le bouton
+  // « Créer un événement ce jour-là » (rien ne s'ouvre d'office)
   $$('.day').forEach((el) => {
     el.addEventListener('click', () => {
       const k = el.dataset.day;
-      if (isMember()) {
-        if (k.slice(0, 7) === month) showDay(k);
-        askCreate(k);
-        return;
-      }
       if (k.slice(0, 7) !== month) { navigate(`/?mois=${k.slice(0, 7)}&jour=${k}`, { replace: true }); return; }
       showDay(k);
       if (window.matchMedia('(max-width: 1020px)').matches) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -307,24 +284,38 @@ export async function mapView() {
       <div class="list-events">${unplaced.slice(0, 20).map((e) => eventCard(e, { showDate: true }))}</div>
     </details>`);
   }
+  // Une pastille par date, jamais de regroupement. Plusieurs dates au même lieu : les pastilles
+  // s'écartent en cercle autour du point, pour que chacune reste visible et se touche séparément.
   const byVenue = new Map();
   for (const e of located) { const k = `${e.lat},${e.lng}`; if (!byVenue.has(k)) byVenue.set(k, []); byVenue.get(k).push(e); }
   const bounds = new ml.LngLatBounds();
   for (const [, list] of byVenue) {
-    const e0 = list[0];
-    const multi = list.length > 1;
-    const st = list.every((e) => e.status === 'annule') ? 'annule' : list.every((e) => e.status === 'option') ? 'option' : '';
-    const el = document.createElement('button');
-    el.type = 'button';
-    el.className = `map-pin ${multi ? 'multi' : ''} ${st}`;
-    el.style.setProperty('--c', e0.asso_color);
-    el.setAttribute('aria-label', `${e0.venue_name} : ${list.length} date${multi ? 's' : ''}`);
-    el.textContent = multi ? String(list.length) : '';
-    const popup = `<b>${esc(e0.venue_name)}</b>${e0.venue_city ? `<br><span style="opacity:.7">${esc(e0.venue_city)}</span>` : ''}<div style="margin-top:8px;display:grid;gap:6px">${list.slice(0, 12).map((e) => `<a href="/evenement/${e.id}"><span style="font-family:var(--font-mono);font-size:.8rem">${esc(fmt(e.starts_at, { day: 'numeric', month: 'short' }))} ${esc(timeHM(e.starts_at))}</span> · ${e.status === 'annule' ? `<s>${esc(e.title)}</s>` : esc(e.title)}</a>`).join('')}${list.length > 12 ? `<span>+ ${list.length - 12} autres</span>` : ''}</div>`;
-    new ml.Marker({ element: el }).setLngLat([e0.lng, e0.lat]).setPopup(new ml.Popup({ offset: 14, maxWidth: '300px' }).setHTML(popup)).addTo(map);
-    bounds.extend([e0.lng, e0.lat]);
+    list.sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
+    const n = list.length;
+    const radius = n === 1 ? 0 : Math.max(16, 9 * n / Math.PI); // assez large pour que les pastilles ne se touchent pas
+    list.forEach((e, i) => {
+      const angle = -Math.PI / 2 + (2 * Math.PI * i) / n; // la première date en haut, puis dans le sens des aiguilles
+      const offset = [Math.round(radius * Math.cos(angle)), Math.round(radius * Math.sin(angle))];
+      const when = `${fmt(e.starts_at, { weekday: 'short', day: 'numeric', month: 'short' })} ${timeHM(e.starts_at)}`;
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.className = `map-pin ${e.status === 'annule' || e.status === 'option' ? e.status : ''}`;
+      el.style.setProperty('--c', e.asso_color);
+      el.title = `${e.title} — ${when}`;
+      el.setAttribute('aria-label', `${e.title}, ${when}, ${e.venue_name || ''}${e.status === 'annule' ? ', annulée' : e.status === 'option' ? ', en option' : ''}`);
+      const popup = `<span style="font-family:var(--font-mono);font-size:.8rem">${esc(when)}</span>
+        <div style="margin:4px 0 2px"><a href="/evenement/${e.id}"><b>${e.status === 'annule' ? `<s>${esc(e.title)}</s>` : esc(e.title)}</b></a></div>
+        <span style="opacity:.75">${esc(e.asso_name)}${e.orgs.length > 1 ? ` + ${e.orgs.length - 1}` : ''}</span><br>
+        <span style="opacity:.75">${esc(e.venue_name || '')}${e.venue_city ? ` · ${esc(e.venue_city)}` : ''}</span>
+        ${e.status === 'annule' ? '<br><span style="opacity:.75">Annulée</span>' : e.status === 'option' ? '<br><span style="opacity:.75">En option</span>' : ''}`;
+      new ml.Marker({ element: el, offset })
+        .setLngLat([e.lng, e.lat])
+        .setPopup(new ml.Popup({ offset: { top: [offset[0], offset[1] + 12], bottom: [offset[0], offset[1] - 12], left: [offset[0] + 12, offset[1]], right: [offset[0] - 12, offset[1]] }, maxWidth: '280px' }).setHTML(popup))
+        .addTo(map);
+    });
+    bounds.extend([list[0].lng, list[0].lat]);
   }
-  if (byVenue.size > 1) map.fitBounds(bounds, { padding: 50, maxZoom: 14, duration: 0 });
+  if (byVenue.size > 1) map.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 0 });
   else if (byVenue.size === 1) map.jumpTo({ center: bounds.getCenter(), zoom: 14 });
 }
 

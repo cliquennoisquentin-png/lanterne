@@ -504,7 +504,8 @@ details.more[open] summary::before { content: '− '; }
 .map-pin { width: 18px; height: 18px; padding: 0; cursor: pointer; border-radius: 50%; background: var(--c); border: 2px solid rgba(255,255,255,.85); box-shadow: 0 0 12px var(--c), 0 0 2px #000; }
 .map-pin.option { background: transparent; border: 2px dashed var(--c); }
 .map-pin.annule { opacity: .45; }
-.map-pin.multi { display: grid; place-items: center; font-family: var(--font-mono); font-size: 10px; color: #fff; font-weight: 500; width: 22px; height: 22px; }
+/* pas de « transform » ici : la carte s'en sert pour placer la pastille */
+.map-pin:hover, .map-pin:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; z-index: 2; }
 
 /* ---------- fiche événement ---------- */
 .event-hero { position: relative; border-radius: var(--radius); overflow: hidden; margin-bottom: 18px; background: var(--surface); }
@@ -662,16 +663,6 @@ dialog.modal.closing::backdrop { animation: backout .19s ease both; }
 @keyframes sheetin { from { transform: translateY(100%); } to { transform: none; } }
 @keyframes sheetout { to { transform: translateY(100%); } }
 
-/* Fenêtre « Créer un événement ce jour-là ? » */
-.ask-create { display: grid; gap: 12px; }
-.ask-busy, .ask-free { display: flex; align-items: center; gap: 8px; margin: 0; font-size: .92rem; color: var(--text-2); }
-.ask-busy svg { width: 18px; height: 18px; color: var(--accent-text); }
-.ask-busy.hot { color: var(--text); }
-.ask-busy.hot svg { filter: drop-shadow(0 0 6px var(--glow)); }
-.ask-free .lantern { width: 14px; height: 19px; }
-.ask-list .ev { padding: 10px 12px 10px 14px; }
-.ask-list .ev-badges { display: none; }
-.ask-question { margin: 4px 0 0; font-size: 1.08rem; font-weight: 500; color: var(--text); }
 .nowrap { white-space: nowrap; }
 
 /* Formulaire : ce qui est déjà posé le jour choisi */
@@ -686,6 +677,11 @@ dialog.modal.closing::backdrop { animation: backout .19s ease both; }
 .day-free { display: flex; align-items: center; gap: 8px; margin: 0; font-size: .86rem; color: var(--text-3); }
 .day-free .lantern { width: 12px; height: 16px; flex: none; }
 [data-day-busy]:empty { display: none; }
+
+/* Carte du jour : bouton « Créer un événement ce jour-là » */
+.day-busy-line { margin: -4px 0 10px; }
+.day-create { width: 100%; margin-top: 14px; }
+.day-create-hint { margin: 14px 0 0; }
 
 /* Bouton « Événements du territoire » sous le jour choisi */
 .territory-btn {

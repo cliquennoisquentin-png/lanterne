@@ -63,7 +63,10 @@ code, les commits et la documentation.
 
 ## Décisions prises (et pourquoi)
 
-- **Toucher un jour ouvre « Créer un événement ce jour-là ? »** au lieu de l'appui long : demande de Quentin.
+- **Toucher un jour l'affiche dans la carte du jour**, avec ses dates puis un bouton « Créer un événement ce jour-là ».
+  Rien ne s'ouvre d'office (novembre 2026 : la fenêtre « Créer un événement ce jour-là ? » gênait pour simplement consulter).
+- **Carte : une pastille par date, jamais de regroupement** (pas de « 2 » sur un lieu). Plusieurs dates au même
+  lieu s'écartent en cercle autour du point. Ne pas utiliser `transform` sur `.map-pin` : MapLibre s'en sert pour la placer.
 - **Les liens des mails ouvrent une page avec un bouton**, et seul le clic consomme le lien : les antivirus de
   messagerie « visitent » les liens et les grillaient.
 - **Pas de récurrence automatique** : on duplique une date. Prévu ainsi au cahier des charges.
