@@ -65,3 +65,13 @@ BASE=http://localhost:3000 LOG=chemin/du/journal node scripts/smoke-test.mjs
 | `MAIL_FROM` | Expéditeur, ex. `Lanterne <adresse@exemple.fr>` (doit être vérifié chez le service d'envoi) |
 | `CONTACT_EMAIL` | Adresse affichée dans les mentions légales |
 | `PUBLIC_URL` | Facultatif : adresse publique si elle diffère de celle de Railway |
+
+## Sauvegardes
+
+- Chaque nuit vers 3 h (heure de Paris), une copie complète part par mail (.zip) aux adresses de `BACKUP_EMAILS` (par défaut `ADMIN_EMAILS`).
+- Administration → Sauvegardes : télécharger ou recevoir une sauvegarde à la demande.
+- Restaurer (remplace toute la base) :
+
+```bash
+DATABASE_URL=postgres://... npm run restore -- lanterne-sauvegarde-....zip --confirmer
+```

@@ -347,7 +347,7 @@ export async function adminView() {
   const tab = params().get('onglet') || 'inscriptions';
   main().innerHTML = '<div class="spinner"></div>';
   const [data] = await Promise.all([api('/api/admin/overview'), loadVenues(true)]);
-  const tabs = { inscriptions: `Inscriptions${data.pending.length ? ` (${data.pending.length})` : ''}`, associations: 'Associations', categories: 'Catégories', lieux: 'Lieux', admins: 'Administrateurs', historique: 'Historique' };
+  const tabs = { inscriptions: `Inscriptions${data.pending.length ? ` (${data.pending.length})` : ''}`, associations: 'Associations', categories: 'Catégories', lieux: 'Lieux', admins: 'Administrateurs', historique: 'Historique', sauvegardes: 'Sauvegardes' };
   let body = '';
   if (tab === 'inscriptions') {
     body = data.pending.length ? html`${data.pending.map((a) => html`<div class="card"><div class="row">${assoLogo(a)}<div style="flex:1;min-width:0"><h2 style="margin:0">${a.name}</h2>
@@ -389,6 +389,21 @@ export async function adminView() {
       <table class="table"><tbody>${data.admins.map((a) => html`<tr><td>${a.name || '—'}</td><td class="faint">${a.email}</td><td class="small">${a.asso_name || ''}</td>
         <td style="text-align:right">${data.env_admins.includes(a.email) ? html`<span class="tiny faint">fondateur</span>` : html`<button class="btn small ghost" data-admin-rm="${a.id}">Retirer</button>`}</td></tr>`)}</tbody></table>
       <form class="row" data-admin-add style="margin-top:12px"><input class="input" type="email" name="email" placeholder="Mail d’un membre (il doit déjà avoir un compte)" style="flex:1" required><button class="btn primary">Nommer administrateur</button></form></div>`;
+  } else if (tab === 'sauvegardes') {
+    const st = await api('/api/admin/backup/status');
+    const last = st.last ? JSON.parse(st.last) : null;
+    body = html`<div class="card"><h2>Sauvegarde automatique</h2>
+      <p class="small muted">Chaque nuit vers 3 h, une copie complète de Lanterne (associations, membres, dates, lieux, commentaires, historique, images) part par mail ${st.recipients.length ? html`à <b>${st.recipients.join(', ')}</b>` : '(aucun destinataire configuré)'}. Gardez ces fichiers en lieu sûr : ils contiennent des données personnelles.</p>
+      ${last ? html`<p class="notice ${last.ok ? 'info' : 'warn'}">${icon(last.ok ? 'check' : 'cancel')} Dernière sauvegarde : <b>${fmt(last.at, { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}</b>
+        — ${last.ok ? `envoyée (${Math.max(1, Math.round((last.size || 0) / 1024))} Ko${last.withImages === false ? ', sans les images, trop lourdes pour un mail' : ''})` : 'échec de l’envoi'}</p>`
+      : html`<p class="notice">Aucune sauvegarde automatique pour l’instant : la première partira cette nuit.</p>`}
+    </div>
+    <div class="card"><h2>Sauvegarde à la demande</h2>
+      <p class="small muted">Utile avant une grosse modification, ou pour garder une copie sur votre ordinateur.</p>
+      <div class="actions"><a class="btn primary" href="/api/admin/backup" download>${icon('archive')}Télécharger une sauvegarde</a>
+        <button class="btn" data-backup-mail>${icon('mail')}Me l’envoyer par mail</button></div>
+      <p class="hint">Pour restaurer une sauvegarde, voir le fichier README du projet (commande « npm run restore »).</p>
+    </div>`;
   } else {
     body = html`<div class="card"><p class="small muted">Qui a modifié quoi. « Revenir avant » restaure l’état précédant la modification.</p>
       ${data.history.map((h) => html`<div class="history-item"><span class="when">${fmt(h.created_at, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
@@ -400,6 +415,11 @@ export async function adminView() {
     <div class="narrow" style="max-width:900px">${body}</div>`);
 
   const reload = async () => { const cfg = await api('/api/config'); state.categories = cfg.categories; adminView(); };
+  $('[data-backup-mail]')?.addEventListener('click', async (ev) => {
+    const b = ev.currentTarget; b.disabled = true;
+    try { const r = await api('/api/admin/backup/mail', { method: 'POST', body: {} }); toast(`Sauvegarde envoyée à ${r.email}.`); } catch (err) { toast(err.message, 'error'); }
+    b.disabled = false;
+  });
   $$('[data-decide]').forEach((b) => b.addEventListener('click', async () => {
     const [id, d] = b.dataset.decide.split(':');
     try { await api(`/api/admin/associations/${id}/${d}`, { method: 'POST', body: {} }); await loadAssos(true); invalidate(); toast(d === 'approve' ? 'Association validée : ses membres ont reçu un mail.' : 'C’est fait.'); adminView(); } catch (err) { toast(err.message, 'error'); }

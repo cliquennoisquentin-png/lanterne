@@ -7,7 +7,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { initDb, q, one, all, tx, closeDb } from './db.js';
-import { loginMail, inviteMail, adminNewAssoMail, approvedMail, sendMail, describeMailSetup } from './mail.js';
+import { loginMail, inviteMail, adminNewAssoMail, approvedMail, sendMail, describeMailSetup, backupMail } from './mail.js';
+import { buildBackup, getMeta, setMeta } from './backup.js';
 import { buildCalendar } from './ics.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -821,6 +822,66 @@ app.delete('/api/admin/members/:id', wrap(async (req, res) => {
   await q('UPDATE users SET association_id = NULL WHERE id = $1', [Number(req.params.id)]);
   res.json({ ok: true });
 }));
+
+// ---------- sauvegardes ----------
+const BACKUP_EMAILS = (process.env.BACKUP_EMAILS || process.env.ADMIN_EMAILS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+const MAX_ATTACHMENT = 9 * 1024 * 1024; // marge sous la limite des pièces jointes
+
+async function mailBackup(recipients, base) {
+  let b = await buildBackup({ withImages: true });
+  let withImages = true;
+  if (b.zip.length > MAX_ATTACHMENT) { b = await buildBackup({ withImages: false }); withImages = false; }
+  let ok = true;
+  for (const to of recipients) ok = (await backupMail(to, { ...b, withImages }, `${base}/admin?onglet=sauvegardes`)).ok && ok;
+  return { ok, size: b.zip.length, counts: b.counts, withImages };
+}
+
+app.get('/api/admin/backup', wrap(async (req, res) => {
+  requireAdmin(req);
+  const b = await buildBackup({ withImages: true });
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="${b.name}"`);
+  res.setHeader('Cache-Control', 'no-store');
+  res.send(b.zip);
+}));
+
+app.get('/api/admin/backup/status', wrap(async (req, res) => {
+  requireAdmin(req);
+  res.json({ last: await getMeta('backup_last'), recipients: BACKUP_EMAILS.map((e) => e.replace(/(.).*@/, '$1…@')) });
+}));
+
+app.post('/api/admin/backup/mail', wrap(async (req, res) => {
+  const u = requireAdmin(req);
+  if (limited(`bk:${u.id}`, 3, 60 * 60e3)) fail(429, 'Trois sauvegardes par heure maximum.');
+  const r = await mailBackup([u.email], baseUrl(req));
+  if (!r.ok) fail(502, 'Le mail de sauvegarde n’a pas pu partir. Téléchargez-la plutôt.');
+  res.json({ ok: true, email: u.email });
+}));
+
+// Chaque nuit vers 3 h (heure de Paris), une sauvegarde part par mail
+const parisNow = () => {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' })
+    .formatToParts(new Date()).map((x) => [x.type, x.value]));
+  return { day: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour) };
+};
+async function nightlyBackup() {
+  if (!BACKUP_EMAILS.length) return;
+  const { day, hour } = parisNow();
+  if (hour < 3) return;
+  const last = JSON.parse((await getMeta('backup_last')) || '{}');
+  if (last.day === day) return;
+  const base = process.env.PUBLIC_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : `http://localhost:${PORT}`);
+  try {
+    const r = await mailBackup(BACKUP_EMAILS, base);
+    await setMeta('backup_last', JSON.stringify({ day, at: new Date().toISOString(), ok: r.ok, size: r.size, counts: r.counts, withImages: r.withImages }));
+    console.log(`[sauvegarde] ${r.ok ? 'envoyée' : 'ÉCHEC d’envoi'} (${Math.round(r.size / 1024)} Ko)`);
+  } catch (err) {
+    await setMeta('backup_last', JSON.stringify({ day, at: new Date().toISOString(), ok: false, error: err.message }));
+    console.error('[sauvegarde] échec', err);
+  }
+}
+setInterval(() => nightlyBackup().catch((e) => console.error('[sauvegarde]', e)), 10 * 60e3).unref();
+setTimeout(() => nightlyBackup().catch((e) => console.error('[sauvegarde]', e)), 60e3).unref();
 
 // ---------- agendas .ics ----------
 async function feedEvents(user, query) {

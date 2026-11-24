@@ -7,7 +7,8 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "icons": "node scripts/make-icons.mjs",
-    "check": "node --check server/index.js && for f in public/*.js; do node --check $f; done"
+    "check": "node --check server/index.js && for f in public/*.js; do node --check $f; done",
+    "restore": "node scripts/restore.mjs"
   },
   "type": "module",
   "dependencies": {
@@ -26,6 +27,6 @@
   },
   "private": true,
   "engines": {
-    "node": ">=20"
+    "node": ">=20.15"
   }
 }

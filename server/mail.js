@@ -53,7 +53,8 @@ export function describeMailSetup() {
 const DAILY_LIMIT = Number(process.env.MAIL_DAILY_LIMIT || 280);
 let dayKey = ''; let sentToday = 0;
 
-export async function sendMail({ to, subject, html, text }) {
+// attachments : [{ name, content: Buffer }]
+export async function sendMail({ to, subject, html, text, attachments = [] }) {
   const today = new Date().toISOString().slice(0, 10);
   if (today !== dayKey) { dayKey = today; sentToday = 0; }
   if (sentToday >= DAILY_LIMIT) {
@@ -67,7 +68,10 @@ export async function sendMail({ to, subject, html, text }) {
       const res = await fetch('https://api.brevo.com/v3/smtp/email', {
         method: 'POST',
         headers: { 'api-key': brevoKey(), 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ sender: parseFrom(from), to: [{ email: to }], subject, htmlContent: html, textContent: text }),
+        body: JSON.stringify({
+          sender: parseFrom(from), to: [{ email: to }], subject, htmlContent: html, textContent: text,
+          ...(attachments.length ? { attachment: attachments.map((a) => ({ name: a.name, content: a.content.toString('base64') })) } : {}),
+        }),
       });
       if (!res.ok) { console.error('[mail] échec Brevo', res.status, await res.text()); return { ok: false }; }
       return { ok: true };
@@ -76,7 +80,10 @@ export async function sendMail({ to, subject, html, text }) {
       const res = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from, to: [to], subject, html, text }),
+        body: JSON.stringify({
+          from, to: [to], subject, html, text,
+          ...(attachments.length ? { attachments: attachments.map((a) => ({ filename: a.name, content: a.content.toString('base64') })) } : {}),
+        }),
       });
       if (!res.ok) { console.error('[mail] échec Resend', res.status, await res.text()); return { ok: false }; }
       return { ok: true };
@@ -85,7 +92,7 @@ export async function sendMail({ to, subject, html, text }) {
     console.error('[mail] erreur réseau', err.message);
     return { ok: false };
   }
-  console.log(`\n[mail] (aucun service d'envoi configuré, mail non envoyé)\n  À : ${to}\n  Objet : ${subject}\n  ${text}\n`);
+  console.log(`\n[mail] (aucun service d'envoi configuré, mail non envoyé)\n  À : ${to}\n  Objet : ${subject}\n  ${text}${attachments.length ? `\n  Pièces jointes : ${attachments.map((a) => `${a.name} (${a.content.length} octets)`).join(', ')}` : ''}\n`);
   return { ok: true, logged: true };
 }
 
@@ -124,5 +131,18 @@ export function approvedMail(to, assoName, url) {
     subject: `${assoName} est validée sur Lanterne`,
     html: layout('Votre association est validée', `<b>${esc(assoName)}</b> fait maintenant partie de Lanterne. Vous pouvez poser vos dates et inviter les autres membres.`, 'Ouvrir Lanterne', url),
     text: `${assoName} est validée sur Lanterne : ${url}`,
+  });
+}
+
+export function backupMail(to, { zip, name, counts, withImages }, url) {
+  const summary = `${counts.associations} association(s), ${counts.users} membre(s), ${counts.events} date(s), ${counts.venues} lieu(x)`;
+  return sendMail({
+    to,
+    subject: `Sauvegarde de Lanterne — ${new Date().toLocaleDateString('fr-FR', { timeZone: 'Europe/Paris' })}`,
+    html: layout('Sauvegarde de la nuit',
+      `Voici la copie complète de Lanterne en pièce jointe : <b>${esc(summary)}</b>.${withImages ? '' : '<br>Les images (logos, visuels) étaient trop lourdes pour un mail : téléchargez une sauvegarde complète depuis l’administration.'}<br><br>Gardez ce fichier en lieu sûr (par exemple dans un dossier Google Drive). Il contient les noms et mails des membres : ne le transférez pas.`,
+      'Ouvrir l’administration', url),
+    text: `Sauvegarde de Lanterne en pièce jointe : ${summary}. Gardez ce fichier en lieu sûr, il contient des données personnelles.`,
+    attachments: [{ name, content: zip }],
   });
 }
