@@ -65,6 +65,11 @@ code, les commits et la documentation.
 
 - **Toucher un jour l'affiche dans la carte du jour**, avec ses dates puis un bouton « Créer un événement ce jour-là ».
   Rien ne s'ouvre d'office (novembre 2026 : la fenêtre « Créer un événement ce jour-là ? » gênait pour simplement consulter).
+  **Un appui long sur un jour** (membres seulement) ouvre directement le formulaire avec la date remplie
+  (demandé par Quentin en novembre 2026, comme prévu au cahier des charges).
+- **Les cases du calendrier ont leur propre teinte** (`--day-bg`, `--day-line`, `--day-edge` dans `styles.css`),
+  plus claire que le fond, pour que la grille se distingue de l'appli. En sombre, `#1d2333` garde les 12 couleurs
+  d'association à 3,8:1 de contraste au minimum : ne pas éclaircir davantage sans revérifier.
 - **Carte : une pastille par date, jamais de regroupement** (pas de « 2 » sur un lieu). Plusieurs dates au même
   lieu s'écartent en cercle autour du point. Ne pas utiliser `transform` sur `.map-pin` : MapLibre s'en sert pour la placer.
 - **Les liens des mails ouvrent une page avec un bouton**, et seul le clic consomme le lien : les antivirus de

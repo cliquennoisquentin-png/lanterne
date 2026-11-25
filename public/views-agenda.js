@@ -81,7 +81,7 @@ export async function monthView() {
         <span>${lantern('var(--accent)', 'annule')} annulée</span>
         <span>Plus un jour brille, plus il est chargé
           <span class="glow-scale" aria-hidden="true">${[0, 1, 2, 3, 4].map((g) => html`<i class="day" style="--g:${g};min-height:0;padding:0"></i>`)}</span></span>
-        <span class="kbd-hint">Touchez un jour pour voir ses dates</span>
+        <span class="kbd-hint">Touchez un jour pour voir ses dates${isMember() ? ' · appui long pour y créer une date' : ''}</span>
       </div></div>
       <aside class="day-panel card" aria-live="polite"></aside>
     </div>`);
@@ -148,9 +148,26 @@ export async function monthView() {
   showDay(sel);
 
   // Un toucher sur un jour : il s'affiche dans la carte du jour, avec ses dates et le bouton
-  // « Créer un événement ce jour-là » (rien ne s'ouvre d'office)
+  // « Créer un événement ce jour-là » (rien ne s'ouvre d'office).
+  // Un appui long (membres) : le formulaire s'ouvre directement, avec la date remplie.
+  let timer = null; let longFired = false; let start = null;
+  const cancelPress = () => { clearTimeout(timer); timer = null; $$('.day.pressing').forEach((d) => d.classList.remove('pressing')); };
   $$('.day').forEach((el) => {
-    el.addEventListener('click', () => {
+    el.addEventListener('pointerdown', (ev) => {
+      if (ev.button !== 0 || !isMember()) return;
+      longFired = false; start = { x: ev.clientX, y: ev.clientY };
+      el.classList.add('pressing');
+      timer = setTimeout(() => {
+        longFired = true; el.classList.remove('pressing');
+        if (navigator.vibrate) navigator.vibrate(15);
+        navigate(`/nouveau?date=${el.dataset.day}`);
+      }, 550);
+    });
+    el.addEventListener('pointermove', (ev) => { if (timer && start && Math.hypot(ev.clientX - start.x, ev.clientY - start.y) > 10) cancelPress(); });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach((t) => el.addEventListener(t, cancelPress));
+    el.addEventListener('contextmenu', (ev) => { if (isMember()) ev.preventDefault(); });
+    el.addEventListener('click', (ev) => {
+      if (longFired) { longFired = false; ev.preventDefault(); return; }
       const k = el.dataset.day;
       if (k.slice(0, 7) !== month) { navigate(`/?mois=${k.slice(0, 7)}&jour=${k}`, { replace: true }); return; }
       showDay(k);
