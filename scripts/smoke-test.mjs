@@ -50,8 +50,11 @@ ok('écriture sans en-tête maison refusée (CSRF)');
 
 // Config et catégories de départ
 const cfg = (await anon.req('/api/config')).data;
-assert.equal(cfg.categories.length, 11); assert.equal(cfg.palette.length, 12);
-ok('11 catégories de départ et palette de 12 couleurs');
+assert.equal(cfg.categories.length, 13); assert.equal(cfg.palette.length, 12);
+for (const c of cfg.categories) assert.ok(cfg.palette.some((p) => p.hex === c.color), `couleur de ${c.name}`);
+assert.equal(cfg.categories.find((c) => c.name === 'Techno')?.color, '#C04BE0');
+assert.ok(cfg.categories.some((c) => c.name === 'Électro'));
+ok('13 catégories de départ (dont Techno et Électro), chacune avec une couleur de la palette');
 
 // Inscription de deux associations
 const regA = new Client();
@@ -78,6 +81,14 @@ ok('un lien de connexion ne sert qu’une fois');
 
 // Validation par l'administrateur
 const admin = await login('admin@lanterne.test');
+// Couleur d'une catégorie : un administrateur la change, une couleur hors palette est ignorée
+const concertId = cfg.categories.find((c) => c.name === 'Concert').id;
+assert.equal((await admin.req(`/api/categories/${concertId}`, { method: 'PUT', body: { color: '#00967F' } })).data.category.color, '#00967F');
+assert.equal((await admin.req(`/api/categories/${concertId}`, { method: 'PUT', body: { color: 'red' } })).data.category.color, '#00967F');
+assert.equal((await admin.req(`/api/categories/${concertId}`, { method: 'PUT', body: { color: '#F0506E' } })).data.category.color, '#F0506E');
+const rap = (await admin.req('/api/categories', { method: 'POST', body: { name: 'Rap' } })).data.category;
+assert.ok(cfg.palette.some((p) => p.hex === rap.color));
+ok('couleur des catégories modifiable par un administrateur, toujours dans la palette');
 const ov = (await admin.req('/api/admin/overview')).data;
 assert.equal(ov.pending.length, 2);
 for (const a of ov.pending) assert.equal((await admin.req(`/api/admin/associations/${a.id}/approve`, { method: 'POST', body: {} })).status, 200);
@@ -114,6 +125,9 @@ const agB = (await mk(bruno, { title: 'AG Quartier Libre', starts_at: d(14, 18),
 ok('6 dates créées (statuts, types, visibilités variés)');
 
 // Visibilité
+const withColor = (await anon.req(`/api/events?from=${encodeURIComponent(d(-1))}`)).data.events.find((e) => e.category_name === 'Concert');
+assert.equal(withColor?.category_color, '#F0506E');
+ok('chaque date arrive avec la couleur de sa catégorie');
 const ids = async (c) => (await c.req(`/api/events?from=${encodeURIComponent(d(-1))}`)).data.events.map((e) => e.id);
 const vAnon = await ids(anon); const vAlice = await ids(alice); const vBruno = await ids(bruno);
 assert.deepEqual(vAnon.sort(), [pubValide, agB].sort());

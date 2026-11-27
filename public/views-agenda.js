@@ -6,7 +6,7 @@ import {
 } from './lib.js';
 import {
   state, isMember, isAdmin, navigate, params, loadEvents, applyFilters, filtersActive, eventCard, emptyState,
-  openModal, confirmBox, openSubscribe, shareEvent, invalidate, normEvent, requireLoginToast,
+  openModal, confirmBox, openSubscribe, shareEvent, invalidate, normEvent, requireLoginToast, evColor, setColorBy, catTag,
 } from './core.js';
 import { territoryCount } from './views-territoire.js';
 
@@ -22,6 +22,17 @@ function viewSwitch(current) {
 }
 const searchBtn = () => html`<a class="btn" href="/liste?q=" aria-label="Chercher une date" title="Chercher une date">${icon('search')}</a>`;
 const filterBtn = () => html`<button class="btn ${filtersActive() ? 'on' : ''}" data-filters aria-label="Filtres">${icon('filter')}<span class="hide-sm">Filtres</span>${filtersActive() ? html`<span class="pill-count">${filtersActive()}</span>` : ''}</button>`;
+// Colorer l'agenda par entité ou par catégorie (choix gardé dans ce navigateur)
+function colorSwitch() {
+  const b = (v, label) => html`<button type="button" data-color-by="${v}" aria-pressed="${state.colorBy === v ? 'true' : 'false'}">${label}</button>`;
+  return html`<span class="color-switch" role="group" aria-label="Couleur des dates">Couleurs :${b('entite', 'par entité')}${b('categorie', 'par catégorie')}</span>`;
+}
+function bindColorSwitch(rerender) {
+  $$('[data-color-by]').forEach((btn) => btn.addEventListener('click', () => {
+    if (state.colorBy === btn.dataset.colorBy) return;
+    setColorBy(btn.dataset.colorBy); rerender();
+  }));
+}
 function bindCommon(root) {
   $('[data-filters]', root)?.addEventListener('click', () => window.lanterne.openFilters());
   $('[data-subscribe]', root)?.addEventListener('click', () => openSubscribe());
@@ -76,7 +87,9 @@ export async function monthView() {
     </div>
     <div class="cal-wrap"><div><div class="cal" role="grid" aria-label="Calendrier ${monthLabel(month)}"><div class="spinner" style="grid-column:1/-1"></div></div>
       <div class="legend">
-        <span>${lantern('var(--accent)')} une date (couleur de l’entité)</span>
+        ${colorSwitch()}
+        ${state.colorBy === 'categorie' ? state.categories.filter((c) => c.active && c.color).map((c) => html`<span>${lantern(c.color)} ${c.name}</span>`)
+          : html`<span>${lantern('var(--accent)')} une date (couleur de l’entité)</span>`}
         <span>${lantern('var(--accent)', 'option')} en option</span>
         <span>${lantern('var(--accent)', 'annule')} annulée</span>
         <span>Plus un jour brille, plus il est chargé
@@ -87,6 +100,7 @@ export async function monthView() {
     </div>`);
   bindCommon(main());
   bindWelcome();
+  bindColorSwitch(() => monthView());
   $$('[data-nav]').forEach((b) => b.addEventListener('click', () => navigate(`/?mois=${addMonths(month, Number(b.dataset.nav))}`, { replace: true })));
 
   let events;
@@ -107,8 +121,8 @@ export async function monthView() {
     const label = `${keyLabel(k)} : ${active ? `${active} date${active > 1 ? 's' : ''}` : 'aucune date'}`;
     return html`<button class="${cls}" style="--g:${g};--i:${i}" data-day="${k}" role="gridcell" aria-label="${label}">
       <span class="num"><b>${Number(k.slice(8))}</b>${active ? html`<span class="count">${active}</span>` : ''}</span>
-      <span class="lanterns">${shown.map((e) => lantern(e.asso_color, e.status === 'option' || e.status === 'annule' ? e.status : ''))}${list.length > 8 ? html`<span class="lantern-more">+${list.length - 8}</span>` : ''}</span>
-      <span class="peek">${list.slice(0, 3).map((e) => html`<span class="${e.status === 'annule' ? 'annule' : ''}" style="--c:${e.asso_color}">${e.title}</span>`)}</span>
+      <span class="lanterns">${shown.map((e) => lantern(evColor(e), e.status === 'option' || e.status === 'annule' ? e.status : ''))}${list.length > 8 ? html`<span class="lantern-more">+${list.length - 8}</span>` : ''}</span>
+      <span class="peek">${list.slice(0, 3).map((e) => html`<span class="${e.status === 'annule' ? 'annule' : ''}" style="--c:${evColor(e)}">${e.title}</span>`)}</span>
     </button>`;
   });
   $('.cal').innerHTML = String(html`${dows.map((d) => html`<div class="cal-dow" aria-hidden="true">${d}</div>`)}${cells}`);
@@ -280,10 +294,12 @@ export async function mapView() {
         <a href="/carte?periode=all" ${range === 'all' ? raw('aria-current="page"') : ''}>Tout à venir</a>
       </div>
       <span class="small faint" data-count></span>
+      <span class="spacer"></span>${colorSwitch()}
     </div>
     <div class="map" id="map" role="region" aria-label="Carte des événements"></div>
     <div data-unplaced></div>`);
   bindCommon(main());
+  bindColorSwitch(() => mapView());
   let ml;
   try { ml = await loadMaplibre(); } catch { $('#map').innerHTML = String(emptyState('La carte n’a pas pu se charger.')); return; }
   if (mapInstance) { mapInstance.remove(); mapInstance = null; }
@@ -333,7 +349,7 @@ export async function mapView() {
       const el = document.createElement('button');
       el.type = 'button';
       el.className = `map-pin ${e.status === 'annule' || e.status === 'option' ? e.status : ''}`;
-      el.style.setProperty('--c', e.asso_color);
+      el.style.setProperty('--c', evColor(e));
       el.title = `${e.title} — ${when}`;
       el.setAttribute('aria-label', `${e.title}, ${when}, ${e.venue_name || ''}${e.status === 'annule' ? ', annulée' : e.status === 'option' ? ', en option' : ''}`);
       const popup = `<span style="font-family:var(--font-mono);font-size:.8rem">${esc(when)}</span>
@@ -379,7 +395,7 @@ export async function eventView(id) {
     <p><a href="/?mois=${dayKey(e.starts_at).slice(0, 7)}&jour=${dayKey(e.starts_at)}" class="small">${icon('chevL', '')} Retour au calendrier</a></p>
     ${e.image_id ? html`<div class="event-hero"><img src="/img/${e.image_id}" alt=""></div>` : ''}
     <div class="event-head" style="--c:${c}"><span class="bar"></span><div style="min-width:0;flex:1">
-      <div class="row">${statusBadge(e.status)}${e.category_name ? html`<span class="tag">${e.category_name}</span>` : ''}<span class="tag">${TYPES[e.type].label}</span>
+      <div class="row">${statusBadge(e.status)}${catTag(e)}<span class="tag">${TYPES[e.type].label}</span>
         <span class="tag">${icon(VIS[e.visibility].icon)}${VIS[e.visibility].label}</span></div>
       <h1 class="event-title ${e.status === 'annule' ? 'cancelled-title' : ''}">${e.title}</h1>
       <div class="links">${e.orgs.map((o) => assoChip(o))}</div>

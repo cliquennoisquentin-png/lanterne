@@ -285,7 +285,7 @@ app.get('/health', async (req, res) => {
 
 // ---------- configuration ----------
 app.get('/api/config', wrap(async (req, res) => {
-  const categories = await all('SELECT id, name, position, active FROM categories ORDER BY position, name');
+  const categories = await all('SELECT id, name, position, active, color FROM categories ORDER BY position, name');
   res.json({ palette: PALETTE, kinds: ENTITY_KINDS, categories, user: publicUser(req.user), contact: process.env.CONTACT_EMAIL || '', version: VERSION, password_login: PASSWORD_LOGIN, tourisme: TOURISME_ENABLED });
 }));
 
@@ -612,14 +612,16 @@ app.post('/api/categories', wrap(async (req, res) => {
   const name = str(req.body.name, 60);
   if (!name) fail(400, 'Nom manquant.');
   const pos = await one('SELECT COALESCE(max(position), 0) + 1 AS p FROM categories');
-  const c = await one('INSERT INTO categories (name, position) VALUES ($1, $2) RETURNING *', [name, pos.p]).catch(() => fail(409, 'Cette catégorie existe déjà.'));
+  const color = PALETTE_HEX.has(req.body.color) ? req.body.color : PALETTE[pos.p % PALETTE.length].hex;
+  const c = await one('INSERT INTO categories (name, position, color) VALUES ($1, $2, $3) RETURNING *', [name, pos.p, color]).catch(() => fail(409, 'Cette catégorie existe déjà.'));
   res.json({ category: c });
 }));
 
 app.put('/api/categories/:id', wrap(async (req, res) => {
   requireAdmin(req);
-  const c = await one('UPDATE categories SET name = COALESCE(NULLIF($1, \'\'), name), active = COALESCE($2, active), position = COALESCE($3, position) WHERE id = $4 RETURNING *',
-    [str(req.body.name, 60), typeof req.body.active === 'boolean' ? req.body.active : null, Number.isInteger(req.body.position) ? req.body.position : null, Number(req.params.id)]);
+  const c = await one('UPDATE categories SET name = COALESCE(NULLIF($1, \'\'), name), active = COALESCE($2, active), position = COALESCE($3, position), color = COALESCE($4, color) WHERE id = $5 RETURNING *',
+    [str(req.body.name, 60), typeof req.body.active === 'boolean' ? req.body.active : null, Number.isInteger(req.body.position) ? req.body.position : null,
+      PALETTE_HEX.has(req.body.color) ? req.body.color : null, Number(req.params.id)]);
   if (!c) fail(404, 'Catégorie introuvable.');
   res.json({ category: c });
 }));
@@ -709,7 +711,7 @@ app.get('/api/tourisme', wrap(async (req, res) => {
 const EVENT_SELECT = `
   SELECT e.*, a.name AS asso_name, a.slug AS asso_slug, a.color AS asso_color, a.kind AS asso_kind,
          v.name AS venue_name, v.address AS venue_address, v.city AS venue_city, v.district AS venue_district, v.lat, v.lng,
-         c.name AS category_name,
+         c.name AS category_name, c.color AS category_color,
          r.starts_at AS rescheduled_from_date,
          COALESCE((SELECT json_agg(json_build_object('id', oa.id, 'name', oa.name, 'slug', oa.slug, 'color', oa.color, 'kind', oa.kind) ORDER BY oa.id = e.association_id DESC, oa.name)
                    FROM event_orgs eo JOIN associations oa ON oa.id = eo.association_id WHERE eo.event_id = e.id), '[]') AS orgs,

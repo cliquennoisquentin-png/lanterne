@@ -66,11 +66,21 @@ export const all = async (text, params = []) => (await impl.query(text, params))
 export const tx = (fn) => impl.tx(fn);
 export const closeDb = () => impl?.close?.();
 
-// Catégories de départ (cahier des charges §3) — uniquement si la table est vide
+// Catégories de départ (cahier des charges §3, plus Techno et Électro demandées en novembre 2026)
+// — uniquement si la table est vide
 const DEFAULT_CATEGORIES = [
-  'Concert', 'Soirée', 'Spectacle', 'Exposition', 'Festival', 'Sport', 'Atelier',
+  'Concert', 'Techno', 'Électro', 'Soirée', 'Spectacle', 'Exposition', 'Festival', 'Sport', 'Atelier',
   'Marché / vide-grenier', 'Conférence', 'Réunion', 'Assemblée générale',
 ];
+// Couleur proposée pour chaque catégorie connue (ce sont des couleurs de PALETTE, server/index.js).
+// Une catégorie inconnue prend une couleur de la palette selon sa place.
+const CATEGORY_COLORS = {
+  'Concert': '#F0506E', 'Techno': '#C04BE0', 'Électro': '#8A63F0', 'Soirée': '#E040A0', 'Spectacle': '#E0661C',
+  'Exposition': '#B57600', 'Festival': '#2B8FD9', 'Sport': '#2F9533', 'Atelier': '#00967F',
+  'Marché / vide-grenier': '#7E8900', 'Conférence': '#0095B0', 'Réunion': '#5B7BF5', 'Assemblée générale': '#5B7BF5',
+};
+export const CATEGORY_FALLBACK = ['#2B8FD9', '#0095B0', '#00967F', '#2F9533', '#7E8900', '#B57600',
+  '#E0661C', '#F0506E', '#E040A0', '#C04BE0', '#8A63F0', '#5B7BF5'];
 
 async function seed() {
   const n = await one('SELECT count(*)::int AS n FROM categories');
@@ -78,5 +88,16 @@ async function seed() {
     for (const [i, name] of DEFAULT_CATEGORIES.entries()) {
       await q('INSERT INTO categories (name, position) VALUES ($1, $2) ON CONFLICT DO NOTHING', [name, i]);
     }
+  } else if (!(await one("SELECT 1 FROM meta WHERE key = 'categories_musique'"))) {
+    // Une seule fois sur une base existante : on ajoute Techno et Électro (un administrateur peut ensuite les masquer)
+    for (const name of ['Techno', 'Électro']) {
+      await q('INSERT INTO categories (name, position) VALUES ($1, (SELECT COALESCE(max(position), 0) + 1 FROM categories)) ON CONFLICT DO NOTHING', [name]);
+    }
+  }
+  await q("INSERT INTO meta (key, value) VALUES ('categories_musique', 'fait') ON CONFLICT DO NOTHING");
+  const uncolored = (await q('SELECT id, name, position FROM categories WHERE color IS NULL ORDER BY position, id')).rows;
+  for (const c of uncolored) {
+    const color = CATEGORY_COLORS[c.name] || CATEGORY_FALLBACK[Math.abs(c.position) % CATEGORY_FALLBACK.length];
+    await q('UPDATE categories SET color = $1 WHERE id = $2', [color, c.id]);
   }
 }

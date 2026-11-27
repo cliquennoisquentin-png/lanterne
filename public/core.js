@@ -12,7 +12,15 @@ export const state = {
   venues: null,
   filters: { assos: [], cats: [], places: [], statuses: [], types: [], kinds: [], ...storage.get('lanterne-filters', {}) },
   cache: new Map(),
+  colorBy: storage.get('lanterne-couleurs', 'entite') === 'categorie' ? 'categorie' : 'entite',
 };
+
+// Couleur d'une date sur l'agenda : celle de l'entité (par défaut) ou celle de sa catégorie (Concert, Techno…),
+// au choix de la personne qui regarde. Le nom de la catégorie est toujours écrit à côté : jamais la couleur seule.
+export const evColor = (e) => (state.colorBy === 'categorie' && e.category_color ? e.category_color : e.asso_color);
+export function setColorBy(v) { state.colorBy = v === 'categorie' ? 'categorie' : 'entite'; storage.set('lanterne-couleurs', state.colorBy); }
+export const catTag = (e) => (e.category_name
+  ? html`<span class="tag">${state.colorBy === 'categorie' && e.category_color ? html`<span class="dot" style="--c:${e.category_color}"></span>` : ''}${e.category_name}</span>` : '');
 
 // Types d'entité : libellé et icône. Une entité sans type connu est une association (celles d'avant).
 export const kindInfo = (id) => state.kinds.find((k) => k.id === id) || state.kinds[0] || { id: 'association', label: 'Association', icon: 'users' };
@@ -101,19 +109,19 @@ export function saveFilters() { storage.set('lanterne-filters', state.filters); 
 
 // ---------- composants ----------
 export function eventCard(e, { showDate = false } = {}) {
-  const c = e.asso_color;
+  const c = evColor(e);
   const co = e.orgs.length > 1 ? ` + ${e.orgs.length - 1}` : '';
   return html`<a class="ev ${e.status}" style="--c:${c}" href="/evenement/${e.id}">
     <div class="ev-time">${showDate ? raw(`${esc(new Intl.DateTimeFormat('fr-FR', { timeZone: 'Europe/Paris', day: 'numeric', month: 'short' }).format(new Date(e.starts_at)))}<br>`) : ''}${timeHM(e.starts_at)}</div>
     <div class="ev-body">
       <div class="ev-title ${e.status === 'annule' ? 'cancelled-title' : ''}">${e.title}</div>
       <div class="ev-meta">
-        <span title="${kindInfo(e.asso_kind).label}"><span class="dot" style="--c:${c}"></span>${e.asso_name}${co}</span>
+        <span title="${kindInfo(e.asso_kind).label}"><span class="dot" style="--c:${e.asso_color}"></span>${e.asso_name}${co}</span>
         ${e.venue_name ? html`<span>${icon('pin')}${e.venue_name}${e.venue_city ? ` · ${e.venue_city}` : ''}</span>` : ''}
       </div>
       <div class="ev-badges">
         ${statusBadge(e.status)}
-        ${e.category_name ? html`<span class="tag">${e.category_name}</span>` : ''}
+        ${catTag(e)}
         ${e.type !== 'public' ? html`<span class="tag">${TYPES[e.type].short}</span>` : ''}
         ${e.visibility !== 'public' ? html`<span class="tag">${icon(e.visibility === 'private' ? 'lock' : 'users')}${e.visibility === 'private' ? 'Privé' : 'Entités'}</span>` : ''}
         ${e.rescheduled_from ? html`<span class="tag">Reporté</span>` : ''}

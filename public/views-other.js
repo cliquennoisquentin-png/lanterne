@@ -566,7 +566,10 @@ export async function adminView() {
     </tbody></table></div>`;
   } else if (tab === 'categories') {
     body = html`<div class="card"><p class="small muted">Liste fixe proposée à la saisie. Une catégorie masquée n’est plus proposée mais reste sur les dates existantes.</p>
+      <p class="small muted">La couleur sert quand on choisit « Couleurs : par catégorie » sur l’agenda.</p>
       <table class="table"><tbody>${state.categories.map((c, i) => html`<tr><td><input class="input" value="${c.name}" data-cat-name="${c.id}" style="min-height:36px"></td>
+        <td><label class="cat-color"><span class="dot" style="--c:${c.color || 'transparent'}"></span><select class="input" data-cat-color="${c.id}" aria-label="Couleur de ${c.name}">
+          ${state.palette.map((p) => html`<option value="${p.hex}" ${p.hex === c.color ? 'selected' : ''}>${p.name}</option>`)}</select></label></td>
         <td style="white-space:nowrap;text-align:right">
           <button class="icon-btn" data-cat-move="${c.id}:-1" aria-label="Monter" ${i === 0 ? 'disabled' : ''}>${icon('up')}</button>
           <button class="icon-btn" data-cat-move="${c.id}:1" aria-label="Descendre" ${i === state.categories.length - 1 ? 'disabled' : ''}>${icon('down')}</button>
@@ -626,6 +629,9 @@ export async function adminView() {
     try { await api(`/api/admin/associations/${id}/${d}`, { method: 'POST', body: {} }); await loadAssos(true); invalidate(); toast(d === 'approve' ? 'Association validée : ses membres ont reçu un mail.' : 'C’est fait.'); adminView(); } catch (err) { toast(err.message, 'error'); }
   }));
   $$('[data-cat-name]').forEach((i) => i.addEventListener('change', async () => { await api(`/api/categories/${i.dataset.catName}`, { method: 'PUT', body: { name: i.value } }); toast('Catégorie renommée.'); reload(); }));
+  $$('[data-cat-color]').forEach((sel) => sel.addEventListener('change', async () => {
+    await api(`/api/categories/${sel.dataset.catColor}`, { method: 'PUT', body: { color: sel.value } }); invalidate(); toast('Couleur enregistrée'); reload();
+  }));
   $$('[data-cat-toggle]').forEach((b) => b.addEventListener('click', async () => { const c = state.categories.find((x) => x.id === Number(b.dataset.catToggle)); await api(`/api/categories/${c.id}`, { method: 'PUT', body: { active: !c.active } }); reload(); }));
   $$('[data-cat-move]').forEach((b) => b.addEventListener('click', async () => {
     const [id, dir] = b.dataset.catMove.split(':').map(Number);

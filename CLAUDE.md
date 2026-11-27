@@ -70,6 +70,13 @@ code, les commits et la documentation.
 - **Les cases du calendrier ont leur propre teinte** (`--day-bg`, `--day-line`, `--day-edge` dans `styles.css`),
   plus claire que le fond, pour que la grille se distingue de l'appli. En sombre, `#1d2333` garde les 12 couleurs
   d'association à 3,8:1 de contraste au minimum : ne pas éclaircir davantage sans revérifier.
+- **Colorer l'agenda par catégorie** (novembre 2026, demandé par des utilisateurs : « techno, concert, électro… ») :
+  chaque catégorie a une couleur de `PALETTE` (`categories.color`, choisie par un administrateur dans l'onglet
+  Catégories). Le choix « Couleurs : par entité / par catégorie » (mois et carte) est gardé dans le navigateur
+  (`lanterne-couleurs`) ; par défaut, par entité. Tout passe par `evColor(e)` dans `core.js` ; la fiche d'une date
+  et le point à côté du nom de l'entité gardent la couleur de l'entité. La légende liste les catégories et chaque carte
+  écrit le nom de la catégorie (jamais la couleur seule). Techno et Électro ont été ajoutées une seule fois aux bases
+  existantes (clé `categories_musique` dans `meta`) : un administrateur peut les masquer sans qu'elles reviennent.
 - **Carte : une pastille par date, jamais de regroupement** (pas de « 2 » sur un lieu). Plusieurs dates au même
   lieu s'écartent en cercle autour du point. Ne pas utiliser `transform` sur `.map-pin` : MapLibre s'en sert pour la placer.
 - **Les liens des mails ouvrent une page avec un bouton**, et seul le clic consomme le lien : les antivirus de

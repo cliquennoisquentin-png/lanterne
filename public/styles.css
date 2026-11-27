@@ -457,6 +457,17 @@ details.more[open] summary::before { content: '− '; }
 
 .legend { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin-top: 14px; font-size: .8rem; color: var(--text-3); }
 .legend .lantern { width: 11px; height: 15px; }
+/* Choix « Couleurs : par entité / par catégorie » (agenda et carte) */
+.color-switch { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; font-size: .8rem; color: var(--text-3); }
+.color-switch button {
+  border: 1px solid var(--line); background: var(--surface); color: var(--text-2); cursor: pointer;
+  padding: 5px 11px; border-radius: 999px; font: inherit; min-height: 32px;
+}
+.color-switch button:first-of-type { margin-left: 4px; }
+.color-switch button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
+.legend .color-switch { flex-basis: 100%; }
+.cat-color { display: inline-flex; align-items: center; gap: 8px; }
+.cat-color select { min-height: 36px; width: auto; }
 .glow-scale { display: inline-flex; gap: 3px; vertical-align: middle; }
 .glow-scale i { width: 16px; height: 12px; border-radius: 4px; background: var(--surface); border: 1px solid var(--line-soft); }
 

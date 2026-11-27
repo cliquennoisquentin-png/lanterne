@@ -160,3 +160,7 @@ ALTER TABLE associations ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'as
 
 -- Petites informations techniques (ex. date de la dernière sauvegarde)
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+
+-- Couleur de chaque catégorie (une des 12 couleurs de PALETTE), pour colorer l'agenda par catégorie.
+-- Remplie au démarrage pour les catégories qui n'en ont pas (server/db.js).
+ALTER TABLE categories ADD COLUMN IF NOT EXISTS color TEXT;
